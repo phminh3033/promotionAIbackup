@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title PromoPilot AI
+title PromotionPilot AI
 cd /d "%~dp0"
 
 if not exist ".venv\Scripts\python.exe" (
@@ -9,7 +9,7 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 
-echo Dang khoi dong PromoPilot AI...
+echo Dang khoi dong PromotionPilot AI...
 echo Trinh duyet se tu mo sau vai giay tai dia chi http://localhost:8501
 echo.
 echo *** KHONG DONG cua so nay trong luc dang su dung ung dung. ***

@@ -9,13 +9,14 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-OBJECTIVES = ["TRAFFIC", "REVENUE", "PROFIT", "CLEARANCE"]
+OBJECTIVES = ["TRAFFIC", "REVENUE", "PROFIT", "CLEARANCE", "BRANDING"]
 
 OBJECTIVE_LABELS_VI = {
     "TRAFFIC": "Kéo Traffic (số khách / số giao dịch)",
     "REVENUE": "Tăng Doanh thu / Dòng tiền",
     "PROFIT": "Tăng Lợi nhuận",
     "CLEARANCE": "Giải phóng Tồn kho",
+    "BRANDING": "Xây dựng thương hiệu (Branding)",
 }
 
 OBJECTIVE_PRIORITY_METRICS_VI = {
@@ -23,6 +24,7 @@ OBJECTIVE_PRIORITY_METRICS_VI = {
     "REVENUE": ["Tổng doanh thu", "Sản lượng bán", "Giá trị đơn hàng trung bình"],
     "PROFIT": ["Lợi nhuận gộp tăng thêm", "ROI", "Margin"],
     "CLEARANCE": ["Sản lượng bán (sell-through)", "Mức giảm tồn kho", "Dòng tiền giải phóng"],
+    "BRANDING": ["Độ phủ khách hàng tiếp cận (proxy)", "Số khách dùng thử", "Sản lượng lan toả"],
 }
 
 
@@ -56,6 +58,12 @@ def score_scenarios(table: pd.DataFrame, objective: str, current_inventory: floa
             sell_through_ratio = (table["san_luong"] / current_inventory).clip(upper=1.5)
             sell_through_norm = _minmax_normalize(sell_through_ratio)
         score = 0.6 * sell_through_norm + 0.2 * units_norm + 0.2 * (1 - margin_norm)
+    elif objective == "BRANDING":
+        # [BUSINESS RULE / proxy]: chưa có dữ liệu reach/impression thật (mạng xã hội, in-store
+        # traffic đếm bằng camera...), dùng số khách hàng ước tính làm proxy cho "độ phủ" —
+        # ưu tiên mạnh hơn TRAFFIC (0.65/0.25/0.10) vì branding chấp nhận đánh đổi lợi nhuận/ROI
+        # ngắn hạn nhiều hơn để tối đa số người tiếp cận/dùng thử.
+        score = 0.8 * n_customers_norm + 0.2 * units_norm
     else:
         raise ValueError(f"Mục tiêu không hợp lệ: {objective}")
 

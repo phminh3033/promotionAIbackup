@@ -17,7 +17,7 @@ st.title("🧪 Model & Độ tin cậy")
 
 st.markdown(
     """
-PromoPilot AI **không dùng một mô hình dự báo cố định**. Với mỗi chuỗi dữ liệu (toàn công ty,
+PromotionPilot AI **không dùng một mô hình dự báo cố định**. Với mỗi chuỗi dữ liệu (toàn công ty,
 theo danh mục, hoặc theo SKU), hệ thống tự động:
 
 1. Phân tích đặc điểm dữ liệu (xu hướng, mùa vụ theo tuần, dữ liệu ngắt quãng...).

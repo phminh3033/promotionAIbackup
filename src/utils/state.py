@@ -4,6 +4,7 @@ from __future__ import annotations
 import streamlit as st
 
 from src.business.profile import BusinessProfile
+from src.context.local_context import LocalContext
 
 
 def init_session_state() -> None:
@@ -15,9 +16,10 @@ def init_session_state() -> None:
         "capabilities": None,
         "clean_df": None,
         "quality_report": None,
-        "business_profile": BusinessProfile(),
+        "business_profile": BusinessProfile.with_yaml_defaults(),
         "objective": "REVENUE",
         "business_events": [],
+        "local_context": LocalContext(),
         "forecast_cache": {},
         "rfm_result": None,
         "segmentation_result": None,
@@ -25,8 +27,15 @@ def init_session_state() -> None:
         "historical_uplifts": None,
         "last_scenario_table": None,
         "last_scenario_baseline": None,
+        "last_scenario_meta": None,
+        "last_rule_context": None,
+        "last_rule_verdicts": None,
         "last_recommendation_card": None,
         "last_campaign_plan": None,
+        "last_execution_plan": None,
+        "active_campaign_id": None,
+        "campaign_actual_data": None,
+        "demo_access_granted": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:

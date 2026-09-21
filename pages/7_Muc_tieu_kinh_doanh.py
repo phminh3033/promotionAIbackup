@@ -11,7 +11,6 @@ import streamlit as st
 from src.business.profile import BusinessProfile, list_profiles, load_profile, save_profile
 from src.optimization.objective import OBJECTIVE_LABELS_VI, OBJECTIVE_PRIORITY_METRICS_VI, OBJECTIVES
 from src.promotion.mechanics import MECHANIC_LABELS_VI
-from src.recommendation.timing import EVENT_TO_OBJECTIVE
 from src.utils.state import init_session_state
 
 init_session_state()
@@ -38,7 +37,15 @@ with st.form("business_profile_form"):
         safety_stock_days = st.number_input("Safety Stock mong muốn (ngày)", min_value=0, value=profile.safety_stock_days)
         lead_time_days = st.number_input("Lead Time nhập hàng (ngày)", min_value=0, value=profile.lead_time_days)
         promotion_budget = st.number_input("Ngân sách Promotion (VNĐ)", min_value=0, value=int(profile.promotion_budget), step=1_000_000)
-        service_capacity = st.number_input("Năng lực phục vụ (khách/nhân viên/giờ)", min_value=1.0, value=profile.service_capacity_per_staff_per_hour)
+        service_capacity = st.number_input("Năng lực phục vụ (khách/nhân viên/giờ)", min_value=1.0, value=float(profile.service_capacity_per_staff_per_hour))
+        min_roi_pct = st.slider("ROI tối thiểu chấp nhận được (%)", 0, 200, int(profile.min_roi_pct * 100)) / 100
+        max_campaign_duration_days = st.number_input("Thời gian chạy campaign tối đa (ngày)", min_value=1, value=profile.max_campaign_duration_days)
+
+    mask_customer_id = st.checkbox(
+        "🔒 Ẩn/mã hoá Mã khách hàng khi hiển thị bảng chi tiết & xuất báo cáo",
+        value=profile.mask_customer_id,
+        help="Bật nếu bạn cần chia sẻ báo cáo/dữ liệu ra ngoài mà không muốn lộ danh tính khách hàng thật.",
+    )
 
     allowed_mechanics = st.multiselect(
         "Cơ chế khuyến mãi doanh nghiệp cho phép sử dụng",
@@ -66,6 +73,9 @@ with st.form("business_profile_form"):
             service_capacity_per_staff_per_hour=service_capacity,
             primary_objective=profile.primary_objective,
             has_seasonality=has_seasonality,
+            min_roi_pct=min_roi_pct,
+            max_campaign_duration_days=max_campaign_duration_days,
+            mask_customer_id=mask_customer_id,
         )
         st.session_state["business_profile"] = new_profile
         save_profile(new_profile, name=business_name.strip().replace(" ", "_").lower() or "default")
@@ -102,15 +112,23 @@ for m in OBJECTIVE_PRIORITY_METRICS_VI[objective]:
     st.write(f"- {m}")
 
 st.divider()
-st.subheader("3️⃣ Sự kiện kinh doanh đặc biệt (tuỳ chọn)")
-st.write("Nếu có sự kiện đặc biệt sắp diễn ra, hệ thống sẽ gợi ý mục tiêu phù hợp.")
-
-event_options = ["-- Không có sự kiện đặc biệt --"] + list(EVENT_TO_OBJECTIVE.keys())
-chosen_event = st.selectbox("Sự kiện", event_options)
-if chosen_event != "-- Không có sự kiện đặc biệt --":
-    suggested_objective, reason = EVENT_TO_OBJECTIVE[chosen_event]
-    st.info(f"💡 Với sự kiện **{chosen_event}**, gợi ý mục tiêu: **{OBJECTIVE_LABELS_VI[suggested_objective]}**. Lý do: {reason}")
-    if st.button("Áp dụng gợi ý này làm mục tiêu"):
-        st.session_state["objective"] = suggested_objective
-        st.session_state["business_events"] = [chosen_event]
-        st.rerun()
+st.subheader("3️⃣ Gợi ý từ Local Context")
+local_ctx = st.session_state.get("local_context")
+if local_ctx and local_ctx.has_any_context():
+    st.info(local_ctx.summary_text())
+    suggestion = local_ctx.suggested_objective()
+    if suggestion:
+        suggested_objective, reason = suggestion
+        st.success(
+            f"💡 Dựa trên sự kiện đã nhập ở trang **Local Context**, gợi ý mục tiêu: "
+            f"**{OBJECTIVE_LABELS_VI[suggested_objective]}**. Lý do: {reason}"
+        )
+        if st.button("Áp dụng gợi ý này làm mục tiêu"):
+            st.session_state["objective"] = suggested_objective
+            st.rerun()
+else:
+    st.write(
+        "Chưa có thông tin bối cảnh địa phương. Vào trang **📍 Local Context** để nhập sự kiện "
+        "kinh doanh, đặc điểm khách hàng khu vực... hệ thống sẽ tự gợi ý mục tiêu phù hợp ở đây."
+    )
+    st.page_link("pages/3_Local_Context.py", label="Đi tới trang Local Context →")

@@ -65,7 +65,7 @@ st.divider()
 st.subheader("🧩 Module nào khả dụng với dữ liệu này?")
 st.write(
     "Dựa trên các cột dữ liệu bạn có, hệ thống tự động bật/tắt các module phân tích tương ứng — "
-    "không phải toàn bộ SME đều có đầy đủ dữ liệu, PromoPilot AI thích nghi theo dữ liệu thực tế của bạn."
+    "không phải toàn bộ SME đều có đầy đủ dữ liệu, PromotionPilot AI thích nghi theo dữ liệu thực tế của bạn."
 )
 for module_name, (enabled, reason) in caps.module_status().items():
     icon = "✅" if enabled else "⛔"

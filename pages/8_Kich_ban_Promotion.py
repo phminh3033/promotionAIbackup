@@ -98,6 +98,53 @@ baseline = BaselineMetrics(
     avg_daily_customers=avg_daily_customers,
 )
 
+# --- Business Rules được tính TRƯỚC khi mô phỏng, để có thể loại các mechanic bị "rejected"
+# (vd hết hàng) ra khỏi danh sách được phép chọn làm "kịch bản tốt nhất" — tránh tình trạng đề
+# xuất một kịch bản mà chính luật kinh doanh đã cảnh báo không nên làm (mục XV yêu cầu gốc).
+trend_recent = recent["quantity"].sum()
+older = scoped_df[(scoped_df["date"] < cutoff) & (scoped_df["date"] >= cutoff - pd.Timedelta(days=RECENT_DAYS))]
+velocity_change = (trend_recent - older["quantity"].sum()) / max(older["quantity"].sum(), 1) if not older.empty else 0.0
+
+basket_result = st.session_state.get("basket_result")
+has_partner, partner_id = False, None
+if basket_result is not None and not basket_result.rules.empty and scope == "Một SKU cụ thể":
+    match = basket_result.rules[basket_result.rules["antecedent"] == scope_value]
+    if not match.empty:
+        has_partner = True
+        partner_id = match.iloc[0]["consequent"]
+
+seg_result = st.session_state.get("segmentation_result")
+repeat_rate, high_value_share = None, None
+if seg_result is not None and seg_result.sufficient_data:
+    labeled = seg_result.rfm_labeled
+    repeat_rate = float((labeled["frequency"] > 1).mean())
+    hv_customers = labeled[labeled["segment"] == "Khách giá trị cao"]["customer_id"]
+    if caps.has_customer and len(hv_customers) > 0:
+        scope_revenue = scoped_df["revenue"].sum()
+        hv_revenue = scoped_df[scoped_df["customer_id"].isin(hv_customers)]["revenue"].sum()
+        high_value_share = float(hv_revenue / scope_revenue) if scope_revenue > 0 else 0.0
+
+days_of_inventory = float("inf")
+if caps.has_inventory and scope == "Một SKU cụ thể":
+    latest_inv = scoped_df.sort_values("date")["inventory"].iloc[-1]
+    days_of_inventory = latest_inv / avg_daily_units if avg_daily_units > 0 else float("inf")
+
+ctx = SkuRuleContext(
+    product_id=product_focus_label,
+    days_of_inventory=days_of_inventory,
+    sales_velocity_change_pct=velocity_change,
+    margin_pct=current_margin,
+    has_basket_partner=has_partner,
+    basket_partner_id=partner_id,
+    repeat_rate=repeat_rate,
+    high_value_customer_share=high_value_share,
+    lead_time_days=profile.lead_time_days,
+)
+verdicts = evaluate_sku_rules(ctx, profile.min_margin_pct, profile.max_discount_pct)
+st.session_state["last_rule_context"] = ctx
+st.session_state["last_rule_verdicts"] = verdicts
+rejected_mechanics = {v.mechanic for v in verdicts if v.verdict == "rejected"}
+
 if st.button("🚀 Chạy mô phỏng kịch bản", type="primary"):
     max_overrides = {
         "discount_percent": max_allowed_depth("discount_percent", unit_cost, avg_price, profile.min_margin_pct, profile.max_discount_pct),
@@ -112,6 +159,9 @@ if st.button("🚀 Chạy mô phỏng kịch bản", type="primary"):
     )
     roi_table = compute_roi_breakdown(sim.table, baseline)
     scored_table = score_scenarios(roi_table, objective, current_inventory=None)
+    # "no_promo" không bao giờ bị reject (không tiêu thêm tồn kho), các mechanic khác bị loại nếu
+    # Business Rules đã đánh giá "rejected" (vd tồn kho không đủ so với lead time).
+    scored_table["bi_tu_choi"] = scored_table["mechanic"].isin(rejected_mechanics) & (scored_table["mechanic"] != "no_promo")
 
     st.session_state["last_scenario_table"] = scored_table
     st.session_state["last_scenario_baseline"] = baseline
@@ -131,16 +181,21 @@ if table is not None and meta and meta["scope_value"] == scope_value:
     st.divider()
     st.warning(f"⚠️ {simulate_scenarios(baseline, {}).disclaimer}")
 
+    if "bi_tu_choi" not in table.columns:
+        table["bi_tu_choi"] = False
+
     display = table.copy()
     display["margin"] = display["margin"].map(lambda v: f"{v:.0%}")
     display["roi"] = display["roi"].map(lambda v: f"{v:.0%}" if pd.notna(v) else "N/A")
     display["uplift_gia_dinh"] = display["uplift_gia_dinh"].map(lambda v: f"{v:.0%}")
+    display["trang_thai"] = display["bi_tu_choi"].map(lambda v: "⛔ Bị từ chối (Business Rules)" if v else "✅ Hợp lệ")
     st.dataframe(
         display[
-            ["scenario", "san_luong", "doanh_thu", "loi_nhuan_gop", "margin", "chi_phi_khuyen_mai", "roi", "uplift_gia_dinh", "nguon_uplift", "diem_muc_tieu"]
+            ["scenario", "trang_thai", "san_luong", "doanh_thu", "loi_nhuan_gop", "margin", "chi_phi_khuyen_mai", "roi", "uplift_gia_dinh", "nguon_uplift", "diem_muc_tieu"]
         ].rename(
             columns={
                 "scenario": "Kịch bản",
+                "trang_thai": "Trạng thái",
                 "san_luong": "Sản lượng",
                 "doanh_thu": "Doanh thu",
                 "loi_nhuan_gop": "Lợi nhuận gộp",
@@ -155,7 +210,14 @@ if table is not None and meta and meta["scope_value"] == scope_value:
         use_container_width=True,
     )
 
-    best_row = table.iloc[0]
+    eligible = table[~table["bi_tu_choi"]]
+    best_row = eligible.iloc[0] if not eligible.empty else table.iloc[0]
+    if table["bi_tu_choi"].any():
+        st.caption(
+            "⛔ Một số kịch bản bị loại khỏi đề xuất vì Business Rules đánh giá không khả thi "
+            "(xem chi tiết lý do ở mục Business Rules bên dưới) — kịch bản tốt nhất chỉ chọn trong "
+            "số các kịch bản còn hợp lệ."
+        )
     st.success(
         f"🏆 Kịch bản tốt nhất cho mục tiêu **{OBJECTIVE_LABELS_VI[objective]}**: **{best_row['scenario']}**"
     )
@@ -173,49 +235,9 @@ if table is not None and meta and meta["scope_value"] == scope_value:
 
     st.divider()
     st.subheader("📐 Đánh giá theo Business Rules")
-
-    trend_recent = recent["quantity"].sum()
-    older = scoped_df[(scoped_df["date"] < cutoff) & (scoped_df["date"] >= cutoff - pd.Timedelta(days=RECENT_DAYS))]
-    velocity_change = (trend_recent - older["quantity"].sum()) / max(older["quantity"].sum(), 1) if not older.empty else 0.0
-
-    basket_result = st.session_state.get("basket_result")
-    has_partner, partner_id = False, None
-    if basket_result is not None and not basket_result.rules.empty and scope == "Một SKU cụ thể":
-        match = basket_result.rules[basket_result.rules["antecedent"] == scope_value]
-        if not match.empty:
-            has_partner = True
-            partner_id = match.iloc[0]["consequent"]
-
-    seg_result = st.session_state.get("segmentation_result")
-    repeat_rate, high_value_share = None, None
-    if seg_result is not None and seg_result.sufficient_data:
-        labeled = seg_result.rfm_labeled
-        repeat_rate = float((labeled["frequency"] > 1).mean())
-        hv_customers = labeled[labeled["segment"] == "Khách giá trị cao"]["customer_id"]
-        if caps.has_customer and len(hv_customers) > 0:
-            scope_revenue = scoped_df["revenue"].sum()
-            hv_revenue = scoped_df[scoped_df["customer_id"].isin(hv_customers)]["revenue"].sum()
-            high_value_share = float(hv_revenue / scope_revenue) if scope_revenue > 0 else 0.0
-
-    days_of_inventory = float("inf")
-    if caps.has_inventory and scope == "Một SKU cụ thể":
-        latest_inv = scoped_df.sort_values("date")["inventory"].iloc[-1]
-        days_of_inventory = latest_inv / avg_daily_units if avg_daily_units > 0 else float("inf")
-
-    ctx = SkuRuleContext(
-        product_id=product_focus_label,
-        days_of_inventory=days_of_inventory,
-        sales_velocity_change_pct=velocity_change,
-        margin_pct=current_margin,
-        has_basket_partner=has_partner,
-        basket_partner_id=partner_id,
-        repeat_rate=repeat_rate,
-        high_value_customer_share=high_value_share,
-        lead_time_days=profile.lead_time_days,
+    st.caption(
+        "Các kịch bản bị đánh dấu ⛔ dưới đây đã được loại khỏi lựa chọn 'kịch bản tốt nhất' ở trên."
     )
-    verdicts = evaluate_sku_rules(ctx, profile.min_margin_pct, profile.max_discount_pct)
-    st.session_state["last_rule_context"] = ctx
-    st.session_state["last_rule_verdicts"] = verdicts
 
     verdict_icon = {"recommended": "✅", "neutral": "➖", "caution": "⚠️", "rejected": "⛔"}
     for v in verdicts:

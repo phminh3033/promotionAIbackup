@@ -8,6 +8,7 @@ openpyxl>=3.1
 streamlit>=1.35
 python-dotenv>=1.0
 pytest>=8.0
+pyyaml>=6.0
 
 # Tuỳ chọn: mở thêm model dự báo Gradient Boosting hiệu suất cao (mục XXXV/IX).
 # Nếu không cài được (vd môi trường hạn chế), hệ thống tự bỏ qua các model này mà không lỗi.

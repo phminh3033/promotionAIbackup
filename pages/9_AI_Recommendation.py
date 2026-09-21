@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import pandas as pd
 import streamlit as st
 
 from src.features.engineering import aggregate_daily
@@ -39,9 +40,14 @@ profile = st.session_state["business_profile"]
 objective = st.session_state["objective"]
 
 candidates = table[table["mechanic"] != "no_promo"]
-candidates = candidates[candidates["margin"] >= profile.min_margin_pct]
+if "bi_tu_choi" in candidates.columns:
+    candidates = candidates[~candidates["bi_tu_choi"]]
+candidates_with_margin = candidates[candidates["margin"] >= profile.min_margin_pct]
+if not candidates_with_margin.empty:
+    candidates = candidates_with_margin
 if candidates.empty:
-    candidates = table[table["mechanic"] != "no_promo"]
+    # Mọi kịch bản khuyến mãi đều bị Business Rules từ chối (vd hết hàng) -> chỉ còn no_promo hợp lệ
+    candidates = table[table["mechanic"] == "no_promo"]
 chosen_scenario = candidates.iloc[0]
 
 ctx = st.session_state.get("last_rule_context")
@@ -136,11 +142,28 @@ with st.container(border=True):
     m5.metric("Doanh thu dự kiến", f"{card.expected_revenue_range[0]:,.0f}đ – {card.expected_revenue_range[1]:,.0f}đ")
     m6.metric("Lợi nhuận gộp dự kiến", f"{card.expected_gp_range[0]:,.0f}đ – {card.expected_gp_range[1]:,.0f}đ")
 
-st.subheader("💬 Tại sao PromoPilot AI đề xuất phương án này?")
+st.subheader("💬 Tại sao PromotionPilot AI đề xuất phương án này?")
 for bullet in card.why_bullets:
     st.markdown(f"- {bullet}")
 
 if card.data_caveats:
     st.warning("⚠️ Lưu ý về độ tin cậy: " + " ".join(card.data_caveats))
 
-st.caption("👉 Sang trang **10. Campaign Plan** để sinh kế hoạch chiến dịch và nội dung marketing.")
+st.divider()
+st.subheader("🥇🥈🥉 Top 3 phương án để bạn so sánh")
+st.caption(f"Xếp hạng theo điểm phù hợp mục tiêu **{OBJECTIVE_LABELS_VI[objective]}** — không chỉ đưa 1 lựa chọn duy nhất.")
+
+top3 = candidates.head(3).reset_index(drop=True)
+medal = ["🥇 Đề xuất", "🥈 Phương án 2", "🥉 Phương án 3"]
+cols = st.columns(len(top3))
+for i, (col, (_, row)) in enumerate(zip(cols, top3.iterrows())):
+    with col:
+        with st.container(border=True):
+            st.markdown(f"**{medal[i]}**")
+            st.markdown(f"{row['scenario']}")
+            st.metric("Doanh thu", f"{row['doanh_thu']:,.0f}đ")
+            st.metric("Lợi nhuận gộp", f"{row['loi_nhuan_gop']:,.0f}đ")
+            st.metric("ROI", f"{row['roi']:.0%}" if pd.notna(row["roi"]) else "N/A")
+            st.caption(f"Điểm phù hợp mục tiêu: {row['diem_muc_tieu']:.2f}/1.0")
+
+st.caption("👉 Sang trang **Execution Plan** để tạo kế hoạch triển khai và nội dung marketing.")

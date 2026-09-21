@@ -15,25 +15,39 @@ import pandas as pd
 
 from src.data.schema import ALL_CANONICAL_FIELDS, REQUIRED_FIELDS, DatasetCapabilities
 
-# Từ khóa gợi ý (đã bỏ dấu, viết thường) cho từng trường chuẩn, ưu tiên xuất hiện trước = match trước
+# Từ khóa gợi ý (đã bỏ dấu, viết thường, đã tách camelCase) cho từng trường chuẩn — ưu tiên
+# xuất hiện trước = match trước. Bao gồm cả biến thể tiếng Việt và các tên cột tiếng Anh phổ biến
+# từ file POS/ERP quốc tế (vd TransactionID, SKU_ID, Price_per_unit, Inventory_Onhand...).
 _SUGGESTION_KEYWORDS: dict[str, list[str]] = {
     "date": ["ngay", "date", "thoi gian", "time", "hoa don ngay", "created", "order date"],
-    "product_id": ["ma san pham", "product_id", "sku", "ma hang", "productid", "item id", "ma sp"],
+    "product_id": [
+        "ma san pham", "product id", "sku id", "sku", "ma hang", "item id", "ma sp",
+    ],
     "quantity": ["so luong", "quantity", "qty", "sl"],
-    "revenue": ["doanh thu", "revenue", "thanh tien", "tong tien", "amount", "sales"],
-    "transaction_id": ["ma giao dich", "transaction_id", "ma hoa don", "invoice", "order id", "bill"],
-    "customer_id": ["ma khach hang", "customer_id", "customerid", "khach hang id", "member id"],
-    "store_id": ["ma cua hang", "store_id", "chi nhanh", "branch", "shop id"],
+    "revenue": ["doanh thu", "revenue", "thanh tien", "tong tien", "amount", "sales", "net sales"],
+    "transaction_id": [
+        "ma giao dich", "transaction id", "ma hoa don", "invoice", "order id", "bill",
+    ],
+    "customer_id": ["ma khach hang", "customer id", "khach hang id", "member id"],
+    "store_id": ["ma cua hang", "store id", "chi nhanh", "branch", "shop id"],
     "category": ["danh muc", "category", "nhom hang", "phan loai"],
-    "selling_price": ["don gia", "selling_price", "gia ban", "unit price", "price"],
-    "cost": ["gia von", "cost", "cogs"],
-    "gross_profit": ["loi nhuan gop", "gross_profit", "gross profit", "lai gop"],
-    "inventory": ["ton kho", "inventory", "stock", "so luong ton"],
-    "promotion_id": ["ma khuyen mai", "promotion_id", "ma cttm", "campaign id"],
-    "promotion_type": ["loai khuyen mai", "promotion_type", "hinh thuc khuyen mai", "promo type"],
-    "discount": ["giam gia", "discount", "% giam"],
-    "promotion_start": ["ngay bat dau khuyen mai", "promotion_start", "start date"],
-    "promotion_end": ["ngay ket thuc khuyen mai", "promotion_end", "end date"],
+    "selling_price": [
+        "don gia", "selling price", "gia ban", "unit price", "price per unit", "price",
+    ],
+    "cost": ["gia von", "cost", "cogs", "cost of goods sold"],
+    "gross_profit": ["loi nhuan gop", "gross profit", "lai gop"],
+    "inventory": ["ton kho", "inventory onhand", "inventory", "stock", "so luong ton", "onhand"],
+    "promotion_id": ["ma khuyen mai", "promotion id", "ma cttm", "campaign id"],
+    "promotion_type": [
+        "loai khuyen mai", "promotion type", "scheme promotion", "hinh thuc khuyen mai", "promo type",
+    ],
+    "discount": ["giam gia", "discount pct", "discount", "% giam"],
+    "promotion_start": [
+        "ngay bat dau khuyen mai", "start date promotion", "promotion start", "start date",
+    ],
+    "promotion_end": [
+        "ngay ket thuc khuyen mai", "end date promotion", "promotion end", "end date",
+    ],
 }
 
 
@@ -61,8 +75,14 @@ def _parse_date_column(series: pd.Series) -> pd.Series:
         return pd.to_datetime(series, errors="coerce", dayfirst=True)
 
 
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
 def _normalize(text: str) -> str:
     text = str(text).replace("đ", "d").replace("Đ", "D")
+    # Tách camelCase/PascalCase TRƯỚC khi lowercase, để "TransactionID" -> "Transaction ID",
+    # "CustomerID" -> "Customer ID" — nhiều file POS/ERP quốc tế đặt tên cột kiểu này.
+    text = _CAMEL_BOUNDARY_RE.sub(" ", text)
     text = unicodedata.normalize("NFD", text)
     text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
     text = text.lower().strip()

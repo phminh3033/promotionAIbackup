@@ -1,0 +1,13 @@
+# Cấu hình quy tắc kinh doanh mặc định cho PromotionPilot AI (mục XL spec).
+# Đây là giá trị KHỞI TẠO khi doanh nghiệp chưa tự cấu hình Business Profile (trang
+# "Mục tiêu kinh doanh"). Mỗi doanh nghiệp nên tự điều chỉnh theo thực tế của mình qua UI —
+# sửa trực tiếp file này chỉ ảnh hưởng giá trị mặc định ban đầu, không ảnh hưởng hồ sơ đã lưu.
+
+minimum_margin: 0.15          # Margin tối thiểu chấp nhận được (15%)
+maximum_discount: 0.30        # Mức giảm giá tối đa cho phép (30%)
+minimum_roi: 0.20             # ROI tối thiểu chấp nhận khi chạy khuyến mãi (20%)
+safety_stock_days: 7          # Số ngày tồn kho dự phòng
+lead_time_days: 5             # Thời gian chờ nhập hàng (ngày)
+campaign_duration_days: 14    # Số ngày chạy 1 chương trình khuyến mãi tối đa
+promotion_budget_vnd: 20000000
+service_capacity_per_staff_per_hour: 8

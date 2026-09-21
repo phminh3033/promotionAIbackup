@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
 
-from src.data.loader import DataLoadError, load_raw_file
+from src.data.loader import DataLoadError, list_excel_sheets, load_raw_file
 from src.data.mapper import apply_mapping, detect_capabilities, suggest_mapping, validate_mapping
 from src.data.quality import run_quality_check
 from src.data.schema import ALL_CANONICAL_FIELDS, FIELD_HINTS_VI, FIELD_LABELS_VI, REQUIRED_FIELDS
@@ -25,8 +25,24 @@ st.write(
 uploaded_file = st.file_uploader("Chọn file dữ liệu", type=["csv", "xlsx", "xls"])
 
 if uploaded_file is not None:
+    file_bytes = uploaded_file.read()
+    sheet_name = None
+
+    if uploaded_file.name.lower().endswith((".xlsx", ".xls")):
+        sheets = list_excel_sheets(file_bytes)
+        if len(sheets) > 1:
+            st.info(
+                f"File Excel này có {len(sheets)} sheet: {', '.join(sheets)}. "
+                "Hãy chọn sheet chứa dữ liệu bán hàng chi tiết (thường tên 'Sales_Data')."
+            )
+            default_idx = next(
+                (i for i, s in enumerate(sheets) if s.strip().lower() in ("sales_data", "sales data", "data")),
+                0,
+            )
+            sheet_name = st.selectbox("Chọn sheet dữ liệu bán hàng", sheets, index=default_idx)
+
     try:
-        raw_df = load_raw_file(uploaded_file.read(), uploaded_file.name)
+        raw_df = load_raw_file(file_bytes, uploaded_file.name, sheet_name=sheet_name)
     except DataLoadError as e:
         st.error(str(e))
         st.stop()

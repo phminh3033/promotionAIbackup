@@ -1,8 +1,8 @@
 @echo off
 chcp 65001 >nul
-title PromoPilot AI - Cai dat lan dau
+title PromotionPilot AI - Cai dat lan dau
 echo ============================================================
-echo   PROMOPILOT AI - CAI DAT LAN DAU TIEN
+echo   PROMOTIONPILOT AI - CAI DAT LAN DAU TIEN
 echo ============================================================
 echo.
 
@@ -43,8 +43,8 @@ echo     Xong.
 echo.
 
 echo [4/4] Dang chuan bi du lieu demo de dung thu...
-if not exist "data\demo_sme_sales.csv" (
-    ".venv\Scripts\python.exe" scripts\generate_demo_data.py
+if not exist "data\pharmacity_demo.csv" (
+    ".venv\Scripts\python.exe" scripts\generate_pharmacity_demo.py
 )
 echo     Xong.
 echo.

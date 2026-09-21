@@ -23,6 +23,8 @@ EVENT_TO_OBJECTIVE = {
     "Khai trương / mới mở cửa hàng": ("TRAFFIC", "Ưu tiên tạo traffic ban đầu và nhận diện thương hiệu hơn là tối đa lợi nhuận ngay."),
     "Mùa cao điểm ngành hàng": ("PROFIT", "Nhu cầu tự nhiên đã cao, không cần giảm giá sâu — nên tối ưu lợi nhuận."),
     "Cần xả hàng tồn kho": ("CLEARANCE", "Ưu tiên giải phóng tồn kho, chấp nhận margin thấp hơn để thu hồi vốn."),
+    "Sự kiện địa phương": ("TRAFFIC", "Tận dụng lượng người qua lại tăng đột biến tại khu vực trong thời gian diễn ra sự kiện."),
+    "Chiến dịch xây dựng thương hiệu (branding)": ("BRANDING", "Ưu tiên độ phủ/nhận diện thương hiệu hơn là doanh thu/lợi nhuận ngắn hạn."),
 }
 
 
