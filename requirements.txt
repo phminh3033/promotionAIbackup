@@ -1,0 +1,16 @@
+numpy>=2.0
+pandas>=2.2
+scikit-learn>=1.4
+statsmodels>=0.14
+plotly>=5.20
+mlxtend>=0.23
+openpyxl>=3.1
+streamlit>=1.35
+python-dotenv>=1.0
+pytest>=8.0
+
+# Tuỳ chọn: mở thêm model dự báo Gradient Boosting hiệu suất cao (mục XXXV/IX).
+# Nếu không cài được (vd môi trường hạn chế), hệ thống tự bỏ qua các model này mà không lỗi.
+xgboost>=2.0
+lightgbm>=4.0
+catboost>=1.2

@@ -1,0 +1,80 @@
+========================================================
+  HUONG DAN CAI DAT & SU DUNG PROMOPILOT AI
+  (Danh cho nguoi khong ranh ky thuat - lam theo tung buoc)
+========================================================
+
+BUOC 0 - CAI PYTHON (chi lam 1 lan duy nhat, neu may chua co)
+----------------------------------------------------------
+1. Vao trang: https://www.python.org/downloads/
+2. Bam nut tai ban moi nhat (Download Python).
+3. Mo file vua tai, o man hinh cai dat dau tien:
+   >>> NHO TICK VAO O "Add Python to PATH" <<<
+   roi bam "Install Now".
+4. Cho cai xong, bam Close.
+
+Neu may da co Python roi thi bo qua buoc nay.
+
+
+BUOC 1 - GIAI NEN THU MUC
+----------------------------------------------------------
+Giai nen (unzip) toan bo thu muc "promopilot-ai" ra mot noi
+de nho tren may tinh, vi du: Desktop hoac D:\PromoPilotAI
+
+QUAN TRONG: Khong doi ten cac file/thu muc ben trong.
+
+
+BUOC 2 - CAI DAT LAN DAU (chi lam 1 lan duy nhat)
+----------------------------------------------------------
+Mo thu muc "promopilot-ai" vua giai nen, TIM va BAM DUP
+(double-click) vao file:
+
+    CAI_DAT_LAN_DAU.bat
+
+Mot cua so den (mau xanh la/den) se hien ra va tu chay.
+Qua trinh nay can may tinh CO KET NOI INTERNET va co the
+mat 2-5 phut. Cu de yen, khong tat cua so, cho den khi thay
+dong chu:
+
+    CAI DAT HOAN TAT!
+
+roi bam phim bat ky de dong cua so.
+
+Neu hien loi mau do, chup man hinh lai va gui cho nguoi ho tro.
+
+
+BUOC 3 - CHAY UNG DUNG (lam moi lan muon dung app)
+----------------------------------------------------------
+Tu lan nay ve sau, MOI LAN muon dung PromoPilot AI, chi can
+BAM DUP vao file:
+
+    CHAY_UNG_DUNG.bat
+
+Cho vai giay, trinh duyet (Chrome/Edge/Cốc Cốc...) se TU DONG
+MO ra ung dung. Neu khong tu mo, mo trinh duyet len va go vao
+thanh dia chi:
+
+    http://localhost:8501
+
+*** KHONG DONG cua so den trong luc dang dung app. ***
+Muon TAT ung dung: dong cua so den do lai, hoac bam Ctrl+C.
+
+LUU Y: Lan chay dau tien app se co san du lieu MAU (demo) de
+thu truoc. Muon dung du lieu ban hang THAT cua doanh nghiep,
+vao muc "1. Tai du lieu" o thanh menu ben trai trong app, roi
+tai len file Excel/CSV ban hang cua ban.
+
+
+CAU HOI THUONG GAP
+----------------------------------------------------------
+Q: May bao "khong cho phep chay script" (execution policy)?
+A: Mo PowerShell, go lenh sau roi Enter (chi lam 1 lan):
+   Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+   Sau do thu bam lai file .bat.
+
+Q: Du lieu ban hang cua toi co bi gui len internet khong?
+A: KHONG. Ung dung nay chay hoan toan tren may tinh cua ban.
+   Du lieu ban hang khong duoc gui di dau ca.
+
+Q: Toi muon dung tren may khac thi lam sao?
+A: Copy nguyen ca thu muc "promopilot-ai" sang may do, roi lam
+   lai tu Buoc 2 (Cai dat lan dau) tren may moi do.
