@@ -6,3 +6,5 @@ __pycache__/
 config/business_profiles/
 config/campaign_log/
 .env
+~$*.md
+~$*.docx
