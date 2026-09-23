@@ -1,4 +1,4 @@
-"""PromotionPilot AI — điểm khởi chạy chính, định nghĩa navigation với tên tiếng Việt đầy đủ."""
+"""PromotionPilot AI — navigation của nền tảng quyết định marketing."""
 from __future__ import annotations
 
 import sys
@@ -7,29 +7,30 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import streamlit as st
+from dotenv import load_dotenv
 
-st.set_page_config(page_title="PromotionPilot AI", page_icon="🧭", layout="wide")
+from ui import nav
+from ui.pages import command_center, data_workspace, decide, execute, forecast, model_info, monitor, prepare, reports, simulate, understand
 
-PAGES_DIR = Path(__file__).resolve().parent / "pages"
+load_dotenv()
+st.set_page_config(page_title="PromotionPilot AI", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
 
-pages = [
-    st.Page(PAGES_DIR / "0_Tong_quan.py", title="Trang chủ", icon="🏠", default=True),
-    st.Page(PAGES_DIR / "1_Tai_du_lieu.py", title="Tải dữ liệu", icon="📤"),
-    st.Page(PAGES_DIR / "2_Chat_luong_du_lieu.py", title="Kiểm tra dữ liệu", icon="✅"),
-    st.Page(PAGES_DIR / "3_Local_Context.py", title="Local Context", icon="📍"),
-    st.Page(PAGES_DIR / "7_Muc_tieu_kinh_doanh.py", title="Mục tiêu kinh doanh", icon="🎯"),
-    st.Page(PAGES_DIR / "3_Du_bao.py", title="Forecast", icon="📈"),
-    st.Page(PAGES_DIR / "6_Ton_kho.py", title="Tồn kho", icon="📦"),
-    st.Page(PAGES_DIR / "4_Khach_hang.py", title="Customer Insight", icon="👥"),
-    st.Page(PAGES_DIR / "5_San_pham_Gio_hang.py", title="Product & Basket Insight", icon="🛒"),
-    st.Page(PAGES_DIR / "8_Kich_ban_Promotion.py", title="Promotion Simulator", icon="🎁"),
-    st.Page(PAGES_DIR / "9_AI_Recommendation.py", title="AI Recommendation", icon="🤖"),
-    st.Page(PAGES_DIR / "11_Execution_Plan.py", title="Execution Plan", icon="🗓️"),
-    st.Page(PAGES_DIR / "12_Campaign_Monitor.py", title="Campaign Monitor", icon="📈"),
-    st.Page(PAGES_DIR / "13_Alerts.py", title="Alerts", icon="🚨"),
-    st.Page(PAGES_DIR / "11_Model_Do_tin_cay.py", title="Model & Confidence", icon="🧪"),
-    st.Page(PAGES_DIR / "15_Export_Report.py", title="Export Report", icon="📤"),
-]
-
-nav = st.navigation(pages)
-nav.run()
+pages = {
+    "command": st.Page(command_center.render, title="Command Center", url_path="command-center", default=True),
+    "understand": st.Page(understand.render, title="Understand", url_path="understand"),
+    "forecast": st.Page(forecast.render, title="Forecast", url_path="forecast"),
+    "prepare": st.Page(prepare.render, title="Prepare", url_path="prepare"),
+    "simulate": st.Page(simulate.render, title="Simulate", url_path="simulate"),
+    "decide": st.Page(decide.render, title="Decide", url_path="decide"),
+    "execute": st.Page(execute.render, title="Execute", url_path="execute"),
+    "monitor": st.Page(monitor.render, title="Monitor", url_path="monitor"),
+    "data": st.Page(data_workspace.render, title="Data", url_path="data"),
+    "reports": st.Page(reports.render, title="Reports", url_path="reports"),
+    "model": st.Page(model_info.render, title="Model Info", url_path="model-info"),
+}
+nav.bind(pages)
+try:
+    navigation = st.navigation(list(pages.values()), position="hidden")
+except TypeError:
+    navigation = st.navigation(list(pages.values()))
+navigation.run()
