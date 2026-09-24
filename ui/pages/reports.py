@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from services.workflow import kpi_snapshot, period_chip
-from ui.components import DASH, EMPTY
+from ui.components import DASH, EMPTY, card, grid, kicker, metric_mini, muted, show
 from ui.formatters import compact_vnd, integer, pct, roi_label
 from ui.shell import render_shell
 
@@ -34,7 +34,7 @@ def render() -> None:
         if fmt == "PDF":
             st.info("Bản này xuất Excel. PDF chưa có bộ kết xuất riêng nên không tạo file PDF giả.")
         if not loaded:
-            st.button("Xuất báo cáo", type="primary", disabled=True, use_container_width=True)
+            st.button("Xuất báo cáo", type="primary", disabled=True, width="stretch")
             st.caption(EMPTY)
         else:
             buffer = _workbook(report_type, store)
@@ -43,28 +43,13 @@ def render() -> None:
                 data=buffer.getvalue(),
                 file_name="promotionpilot_bao_cao.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
+                width="stretch",
             )
     with right:
         if loaded:
             _preview(store)
         else:
-            st.markdown(
-                f"""
-<div class="pp-card">
-  <div class="pp-kicker">Xem trước báo cáo</div>
-  <h2 style="margin:6px 0">PromotionPilot AI</h2>
-  <p class="pp-muted">{EMPTY}</p>
-  <div class="pp-grid-2">
-    <div class="pp-metric-mini"><div class="l">Doanh thu</div><div class="v">{DASH}</div></div>
-    <div class="pp-metric-mini"><div class="l">Đơn / dòng</div><div class="v">{DASH}</div></div>
-    <div class="pp-metric-mini"><div class="l">Margin</div><div class="v">{DASH}</div></div>
-    <div class="pp-metric-mini"><div class="l">ROI mô phỏng</div><div class="v">{DASH}</div></div>
-  </div>
-</div>
-""",
-                unsafe_allow_html=True,
-            )
+            show(_preview_card(EMPTY, DASH, DASH, DASH, DASH, ""))
 
 
 def _preview(store: str) -> None:
@@ -75,22 +60,29 @@ def _preview(store: str) -> None:
     if "gross_profit" in df.columns and revenue:
         margin = float(df["gross_profit"].sum()) / revenue
     snap = kpi_snapshot()
-    st.markdown(
-        f"""
-<div class="pp-card">
-  <div class="pp-kicker">Xem trước báo cáo</div>
-  <h2 style="margin:6px 0">PromotionPilot AI</h2>
-  <p class="pp-muted">{period_chip()} · {store}</p>
-  <div class="pp-grid-2">
-    <div class="pp-metric-mini"><div class="l">Doanh thu</div><div class="v">{compact_vnd(revenue)}</div></div>
-    <div class="pp-metric-mini"><div class="l">Đơn / dòng</div><div class="v">{integer(orders)}</div></div>
-    <div class="pp-metric-mini"><div class="l">Margin</div><div class="v">{pct(margin, 1) if margin is not None else "—"}</div></div>
-    <div class="pp-metric-mini"><div class="l">ROI mô phỏng</div><div class="v">{roi_label(snap["roi"]) if snap else "—"}</div></div>
-  </div>
-  <p class="pp-muted" style="margin-top:8px">Phần dự báo, mô phỏng và đề xuất trong file là kết quả phiên làm việc, không tự chạy lại khi lọc cửa hàng.</p>
-</div>
-""",
-        unsafe_allow_html=True,
+    show(_preview_card(
+        f"{period_chip()} · {store}",
+        compact_vnd(revenue),
+        integer(orders),
+        pct(margin, 1) if margin is not None else "—",
+        roi_label(snap["roi"]) if snap else "—",
+        "Phần dự báo, mô phỏng và đề xuất trong file là kết quả phiên làm việc, không tự chạy lại khi lọc cửa hàng.",
+    ))
+
+
+def _preview_card(subtitle: str, revenue: str, orders: str, margin: str, roi: str, note: str) -> str:
+    note_html = muted(note) if note else ""
+    return card(
+        kicker("Xem trước báo cáo")
+        + '<h2 style="margin:6px 0">PromotionPilot AI</h2>'
+        + muted(subtitle)
+        + grid([
+            metric_mini("Doanh thu", revenue),
+            metric_mini("Đơn / dòng", orders),
+            metric_mini("Margin", margin),
+            metric_mini("ROI mô phỏng", roi),
+        ], columns=2)
+        + note_html
     )
 
 

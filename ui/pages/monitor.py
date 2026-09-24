@@ -7,8 +7,8 @@ import streamlit as st
 from src.alerts.engine import decide_action, evaluate_alerts
 from src.learning.campaign_log import list_campaign_records, save_campaign_record
 from src.monitoring.campaign_monitor import build_daily_baseline, compare_actual_vs_forecast, cumulative_variance
-from ui.charts import time_series
-from ui.components import DASH, EMPTY, badge, chart_placeholder
+from ui.charts import show_chart, time_series
+from ui.components import DASH, EMPTY, badge, banner, bullets, card, chart_card, grid, kicker, kpi_grid, muted, section, show, stat_card
 from ui.formatters import integer, pct, roi_label, signed_pct, vnd
 from ui.nav import goto
 from ui.shell import render_shell
@@ -40,28 +40,15 @@ def render() -> None:
 
 
 def _empty_monitor() -> None:
-    st.markdown(
-        f"""
-<div class="pp-kpi-grid">
-  <div class="pp-card"><div class="pp-kicker">Doanh thu thực tế</div><div class="pp-value">{DASH}</div><div class="pp-muted">{EMPTY}</div></div>
-  <div class="pp-card"><div class="pp-kicker">Số đơn hàng</div><div class="pp-value">{DASH}</div><div class="pp-muted">{EMPTY}</div></div>
-  <div class="pp-card"><div class="pp-kicker">Biên lợi nhuận</div><div class="pp-value">{DASH}</div><div class="pp-muted">{EMPTY}</div></div>
-  <div class="pp-card"><div class="pp-kicker">ROI</div><div class="pp-value">{DASH}</div><div class="pp-muted">{EMPTY}</div></div>
-</div>
-<div class="pp-card"><div class="pp-kicker">Thực tế và dự báo theo thời gian</div>{chart_placeholder()}</div>
-<div class="pp-grid-3" style="margin-top:12px">
-  <div class="pp-card"><div class="pp-kicker">Tồn kho thấp</div><p class="pp-muted">{EMPTY}</p></div>
-  <div class="pp-card"><div class="pp-kicker">Traffic so với dự báo</div><p class="pp-muted">{EMPTY}</p></div>
-  <div class="pp-card"><div class="pp-kicker">Biên lợi nhuận</div><p class="pp-muted">{EMPTY}</p></div>
-</div>
-<div class="pp-grid-3" style="margin-top:12px">
-  <div class="pp-card"><div class="pp-kicker">Điểm đang đạt</div><p class="pp-muted">{EMPTY}</p></div>
-  <div class="pp-card"><div class="pp-kicker">Điểm dưới dự báo</div><p class="pp-muted">{EMPTY}</p></div>
-  <div class="pp-card"><div class="pp-kicker">Đề xuất vòng sau</div><p class="pp-muted">{EMPTY}</p></div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
+    show(kpi_grid([
+        stat_card("Doanh thu thực tế", DASH, EMPTY),
+        stat_card("Số đơn hàng", DASH, EMPTY),
+        stat_card("Biên lợi nhuận", DASH, EMPTY),
+        stat_card("ROI", DASH, EMPTY),
+    ]))
+    show(chart_card("Thực tế và dự báo theo thời gian"))
+    show(grid([card(kicker(title) + muted(EMPTY)) for title in ("Tồn kho thấp", "Traffic so với dự báo", "Biên lợi nhuận")], style="margin-top:12px"))
+    show(grid([card(kicker(title) + muted(EMPTY)) for title in ("Điểm đang đạt", "Điểm dưới dự báo", "Đề xuất vòng sau")], style="margin-top:12px"))
 
 
 def _pick(records):
@@ -86,17 +73,12 @@ def _kpis(record) -> None:
     orders = sum((row.get("customers") or 0) for row in actual_rows) if actual_rows else None
     gp = sum((row.get("gp") or 0) for row in actual_rows) if actual_rows else None
     margin = (gp / revenue) if revenue else None
-    st.markdown(
-        f"""
-<div class="pp-kpi-grid">
-  <div class="pp-card"><div class="pp-kicker">Doanh thu thực tế</div><div class="pp-value" style="font-size:24px">{vnd(revenue) if revenue else "—"}</div><div class="pp-muted">so với dự báo {signed_pct(variance.get("revenue"))}</div></div>
-  <div class="pp-card"><div class="pp-kicker">Khách hàng</div><div class="pp-value">{integer(orders) if orders else "—"}</div><div class="pp-muted">so với dự báo {signed_pct(variance.get("customers"))}</div></div>
-  <div class="pp-card"><div class="pp-kicker">Biên lợi nhuận</div><div class="pp-value">{pct(margin, 1) if margin is not None else "—"}</div><div class="pp-muted">so với dự báo {signed_pct(variance.get("gp"))}</div></div>
-  <div class="pp-card"><div class="pp-kicker">ROI</div><div class="pp-value">{roi_label(record.roi_actual)}</div><div class="pp-muted">ROI dự báo {roi_label(record.roi_forecast)}</div></div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
+    show(kpi_grid([
+        stat_card("Doanh thu thực tế", vnd(revenue) if revenue else "—", f"so với dự báo {signed_pct(variance.get('revenue'))}", compact=True),
+        stat_card("Khách hàng", integer(orders) if orders else "—", f"so với dự báo {signed_pct(variance.get('customers'))}"),
+        stat_card("Biên lợi nhuận", pct(margin, 1) if margin is not None else "—", f"so với dự báo {signed_pct(variance.get('gp'))}"),
+        stat_card("ROI", roi_label(record.roi_actual), f"ROI dự báo {roi_label(record.roi_forecast)}"),
+    ]))
 
 
 def _chart(record):
@@ -120,7 +102,7 @@ def _chart(record):
             y_title="Doanh thu",
             title="Thực tế và dự báo theo ngày",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        show_chart(fig)
     st.session_state["campaign_actual_data"] = compared
     return compared
 
@@ -135,7 +117,7 @@ def _editor(record) -> None:
     edited = st.data_editor(
         default,
         num_rows="dynamic",
-        use_container_width=True,
+        width="stretch",
         key=f"actual_{record.campaign_id}",
         column_config={
             "date": st.column_config.DateColumn("Ngày", required=True),
@@ -224,13 +206,14 @@ def _evaluate(record):
 
 def _alerts(alerts) -> None:
     if not alerts:
-        st.markdown('<div class="pp-banner good">Không có cảnh báo từ các luật hiện tại.</div>', unsafe_allow_html=True)
+        show(banner("Không có cảnh báo từ các luật hiện tại.", "good"))
         return
     blocks = []
     for item in alerts:
         label, kind = LEVEL_KIND.get(item.level, ("Thấp", "info"))
-        blocks.append(f'<div class="pp-card"><div class="pp-kicker">{item.code}</div><p class="pp-muted">{item.message}</p>{badge(label, kind)}</div>')
-    st.markdown(f'<div class="pp-section"><div><h2>Cảnh báo</h2></div></div><div class="pp-grid-3">{"".join(blocks)}</div>', unsafe_allow_html=True)
+        blocks.append(card(kicker(item.code) + muted(item.message) + badge(label, kind)))
+    show(section("Cảnh báo"))
+    show(grid(blocks))
 
 
 def _learning(record, action) -> None:
@@ -239,16 +222,11 @@ def _learning(record, action) -> None:
         (worked if record.variance["revenue"] >= 0 else weak).append(f"Doanh thu thực tế {signed_pct(record.variance['revenue'])} so với dự báo.")
     if record.variance.get("gp") is not None:
         (worked if record.variance["gp"] >= 0 else weak).append(f"Lợi nhuận gộp {signed_pct(record.variance['gp'])} so với dự báo.")
-    lessons = "".join(f"<li>{item}</li>" for item in action.reasons) or "<li>Chưa đủ tín hiệu để rút bài học.</li>"
-    worked_html = "".join(f"<li>{item}</li>" for item in worked) or "<li>Chưa có chỉ số vượt dự báo.</li>"
-    weak_html = "".join(f"<li>{item}</li>" for item in weak) or "<li>Chưa có chỉ số dưới dự báo.</li>"
-    st.markdown(
-        f"""
-<div class="pp-grid-3" style="margin-top:12px">
-  <div class="pp-card"><div class="pp-kicker">Điểm đang đạt</div><ul class="pp-list">{worked_html}</ul></div>
-  <div class="pp-card"><div class="pp-kicker">Điểm dưới dự báo</div><ul class="pp-list">{weak_html}</ul></div>
-  <div class="pp-card"><div class="pp-kicker">Đề xuất vòng sau</div><p class="pp-muted">{action.action_vi}</p><ul class="pp-list">{lessons}</ul></div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
+    lessons = list(action.reasons) or ["Chưa đủ tín hiệu để rút bài học."]
+    worked_items = worked or ["Chưa có chỉ số vượt dự báo."]
+    weak_items = weak or ["Chưa có chỉ số dưới dự báo."]
+    show(grid([
+        card(kicker("Điểm đang đạt") + bullets(worked_items)),
+        card(kicker("Điểm dưới dự báo") + bullets(weak_items)),
+        card(kicker("Đề xuất vòng sau") + muted(action.action_vi) + bullets(lessons)),
+    ], style="margin-top:12px"))

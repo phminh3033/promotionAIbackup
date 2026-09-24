@@ -5,7 +5,20 @@ import pandas as pd
 import streamlit as st
 
 from services.workflow import build_decision, ensure_scores, scenario_views, top_alternatives
-from ui.components import DASH, EMPTY, badge
+from ui.components import (
+    DASH,
+    EMPTY,
+    badge,
+    bullets,
+    card,
+    grid,
+    kicker,
+    metric_mini,
+    metric_mini_html,
+    scenario_card,
+    section,
+    show,
+)
 from ui.formatters import integer, roi_label, signed_pct, vnd
 from ui.nav import goto
 from ui.shell import render_shell
@@ -40,45 +53,53 @@ def render() -> None:
         if st.button("Quay lại mô phỏng", key="dec_back"):
             goto("simulate")
     with right:
-        if st.button("Chọn phương án này", type="primary", key="dec_accept", use_container_width=True):
+        if st.button("Chọn phương án này", type="primary", key="dec_accept", width="stretch"):
             build_decision(st.session_state.get("selected_mechanic"))
             goto("execute")
 
 
 def _empty_decision() -> None:
-    st.markdown(
-        f"""
-<div class="pp-card">
-  <div class="pp-kicker">Phương án đề xuất bởi mô hình</div>
-  <div class="pp-section"><div><h2>{DASH}</h2><p>{EMPTY}</p></div>{badge(EMPTY, "muted")}</div>
-  <div class="pp-grid-3">
-    <div class="pp-metric-mini"><div class="l">Revenue lift</div><div class="v">{DASH}</div></div>
-    <div class="pp-metric-mini"><div class="l">Profit impact</div><div class="v">{DASH}</div></div>
-    <div class="pp-metric-mini"><div class="l">ROI</div><div class="v">{DASH}</div></div>
-    <div class="pp-metric-mini"><div class="l">Confidence</div><div class="v">{DASH}</div></div>
-    <div class="pp-metric-mini"><div class="l">Risk</div><div class="v">{DASH}</div></div>
-    <div class="pp-metric-mini"><div class="l">Nhu cầu tồn kho</div><div class="v">{DASH}</div></div>
-  </div>
-</div>
-<div class="pp-grid-2" style="margin-top:12px">
-  <div class="pp-card"><div class="pp-kicker">Lý do đề xuất</div><p class="pp-muted">{EMPTY}</p></div>
-  <div class="pp-card"><div class="pp-kicker">Đánh đổi cần lưu ý</div><p class="pp-muted">{EMPTY}</p></div>
-</div>
-<div class="pp-section"><div><h2>Các phương án khác</h2></div></div>
-<div class="pp-grid-3">
-  <div class="pp-card"><div class="pp-kicker">Phương án 2</div><p class="pp-muted">Revenue {DASH}<br>Profit {DASH}<br>ROI {DASH}</p></div>
-  <div class="pp-card"><div class="pp-kicker">Phương án 3</div><p class="pp-muted">Revenue {DASH}<br>Profit {DASH}<br>ROI {DASH}</p></div>
-  <div class="pp-card"><div class="pp-kicker">Không khuyến mãi</div><p class="pp-muted">Revenue {DASH}<br>Profit {DASH}<br>ROI {DASH}</p></div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
+    show(_decision_card("Phương án đề xuất bởi mô hình", DASH, EMPTY, badge(EMPTY, "muted"), [
+        ("Revenue lift", DASH),
+        ("Profit impact", DASH),
+        ("ROI", DASH),
+        ("Confidence", DASH),
+        ("Risk", DASH),
+        ("Nhu cầu tồn kho", DASH),
+    ]))
+    show(grid([
+        card(kicker("Lý do đề xuất") + f'<p class="pp-muted">{EMPTY}</p>'),
+        card(kicker("Đánh đổi cần lưu ý") + f'<p class="pp-muted">{EMPTY}</p>'),
+    ], columns=2, style="margin-top:12px"))
+    show(section("Các phương án khác"))
+    show(grid([
+        scenario_card(name, "", [f"Revenue {DASH}", f"Profit {DASH}", f"ROI {DASH}"])
+        for name in ("Phương án 2", "Phương án 3", "Không khuyến mãi")
+    ]))
     left, right = st.columns([1, 1])
     with left:
         if st.button("Quay lại mô phỏng", key="dec_back_empty"):
             goto("simulate")
     with right:
-        st.button("Chọn phương án này", type="primary", key="dec_accept_empty", disabled=True, use_container_width=True)
+        st.button("Chọn phương án này", type="primary", key="dec_accept_empty", disabled=True, width="stretch")
+
+
+def _decision_card(eyebrow, title, subtitle, badge_html, metrics, risk_html: str = "", footer: str = "") -> str:
+    from ui.components import esc, muted
+
+    cells = []
+    for label, value in metrics:
+        if label == "Risk" and risk_html:
+            cells.append(metric_mini_html(label, risk_html))
+        else:
+            cells.append(metric_mini(label, value))
+    foot = muted(footer) if footer else ""
+    return card(
+        kicker(eyebrow)
+        + f'<div class="pp-section"><div><h2>{esc(title)}</h2><p>{esc(subtitle)}</p></div>{badge_html}</div>'
+        + grid(cells, columns=3)
+        + foot
+    )
 
 
 def _hero(card, table: pd.DataFrame) -> None:
@@ -88,35 +109,35 @@ def _hero(card, table: pd.DataFrame) -> None:
     mechanic = st.session_state.get("selected_mechanic")
     view = views.get(mechanic) or next(iter(views.values()))
     conf = f"{card.confidence_pct_range[0]}–{card.confidence_pct_range[1]}%"
-    st.markdown(
-        f"""
-<div class="pp-card">
-  <div class="pp-kicker">Phương án đề xuất bởi mô hình <span class="en">{st.session_state.get("decision_objective_label", "")}</span></div>
-  <div class="pp-section"><div><h2>{card.promotion_label}</h2><p>{card.product_focus} · {card.target_segment} · {card.timing_text}</p></div>{badge("Model-based recommendation", "purple")}</div>
-  <div class="pp-grid-3">
-    <div class="pp-metric-mini"><div class="l">Revenue lift</div><div class="v">{signed_pct(view.get("revenue_lift"))}</div></div>
-    <div class="pp-metric-mini"><div class="l">Profit impact</div><div class="v">{signed_pct(view.get("profit_lift"))}</div></div>
-    <div class="pp-metric-mini"><div class="l">ROI</div><div class="v">{roi_label(view.get("roi")) if view.get("roi") is not None else "—"}</div></div>
-    <div class="pp-metric-mini"><div class="l">Confidence</div><div class="v">{conf}</div></div>
-    <div class="pp-metric-mini"><div class="l">Risk</div><div class="v">{badge(card.risk_label, RISK_KIND.get(card.risk_label, "muted"))}</div></div>
-    <div class="pp-metric-mini"><div class="l">Nhu cầu tồn kho</div><div class="v">{integer(card.recommended_stock)}</div></div>
-  </div>
-  <p class="pp-muted" style="margin-top:10px">Doanh thu dự kiến {vnd(card.expected_revenue_range[0])} – {vnd(card.expected_revenue_range[1])}. Lợi nhuận gộp {vnd(card.expected_gp_range[0])} – {vnd(card.expected_gp_range[1])}.</p>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
+    objective = st.session_state.get("decision_objective_label", "")
+    show(_decision_card(
+        f"Phương án đề xuất bởi mô hình · {objective}" if objective else "Phương án đề xuất bởi mô hình",
+        card.promotion_label,
+        f"{card.product_focus} · {card.target_segment} · {card.timing_text}",
+        badge("Model-based recommendation", "purple"),
+        [
+            ("Revenue lift", signed_pct(view.get("revenue_lift"))),
+            ("Profit impact", signed_pct(view.get("profit_lift"))),
+            ("ROI", roi_label(view.get("roi")) if view.get("roi") is not None else "—"),
+            ("Confidence", conf),
+            ("Risk", None),
+            ("Nhu cầu tồn kho", integer(card.recommended_stock)),
+        ],
+        risk_html=badge(card.risk_label, RISK_KIND.get(card.risk_label, "muted")),
+        footer=(
+            f"Doanh thu dự kiến {vnd(card.expected_revenue_range[0])} – {vnd(card.expected_revenue_range[1])}. "
+            f"Lợi nhuận gộp {vnd(card.expected_gp_range[0])} – {vnd(card.expected_gp_range[1])}."
+        ),
+    ))
 
 
 def _lists(card) -> None:
-    reasons = "".join(f"<li>{item}</li>" for item in card.why_bullets)
-    tradeoffs = st.session_state.get("decision_tradeoffs") or card.data_caveats
-    trade_html = "".join(f"<li>{item}</li>" for item in tradeoffs) or "<li>Không có đánh đổi nổi bật từ các luật hiện tại.</li>"
+    tradeoffs = list(st.session_state.get("decision_tradeoffs") or card.data_caveats) or ["Không có đánh đổi nổi bật từ các luật hiện tại."]
     left, right = st.columns(2)
     with left:
-        st.markdown(f'<div class="pp-card"><div class="pp-kicker">Lý do đề xuất</div><ul class="pp-list">{reasons}</ul></div>', unsafe_allow_html=True)
+        show(card(kicker("Lý do đề xuất") + bullets(list(card.why_bullets))))
     with right:
-        st.markdown(f'<div class="pp-card"><div class="pp-kicker">Đánh đổi cần lưu ý</div><ul class="pp-list">{trade_html}</ul></div>', unsafe_allow_html=True)
+        show(card(kicker("Đánh đổi cần lưu ý") + bullets(tradeoffs)))
 
 
 def _alternatives(table: pd.DataFrame, card) -> None:
@@ -125,7 +146,7 @@ def _alternatives(table: pd.DataFrame, card) -> None:
     views = {row["scenario"]: row for row in scenario_views(table, profile, meta)}
     chosen_mechanic = st.session_state.get("selected_mechanic") or ""
     alts = top_alternatives(table, chosen_mechanic)
-    st.markdown('<div class="pp-section"><div><h2>Các phương án khác</h2><p>Cùng bảng mô phỏng, xếp theo điểm mục tiêu.</p></div></div>', unsafe_allow_html=True)
+    show(section("Các phương án khác", "Cùng bảng mô phỏng, xếp theo điểm mục tiêu."))
     if alts.empty:
         st.caption("Không còn phương án khác hợp lệ.")
         return
@@ -133,17 +154,11 @@ def _alternatives(table: pd.DataFrame, card) -> None:
     for col, (_, row) in zip(cols, alts.iterrows()):
         view = views.get(row["scenario"], {})
         with col:
-            st.markdown(
-                f"""
-<div class="pp-card">
-  <div class="pp-kicker">{row["scenario"]}</div>
-  <div class="pp-muted">Revenue lift {signed_pct(view.get("revenue_lift"))}</div>
-  <div class="pp-muted">Profit {vnd(row["loi_nhuan_gop"])}</div>
-  <div class="pp-muted">ROI {roi_label(row["roi"])}</div>
-</div>
-""",
-                unsafe_allow_html=True,
-            )
+            show(scenario_card(row["scenario"], "", [
+                f"Revenue lift {signed_pct(view.get('revenue_lift'))}",
+                f"Profit {vnd(row['loi_nhuan_gop'])}",
+                f"ROI {roi_label(row['roi'])}",
+            ]))
             if st.button("Chọn phương án này", key=f"alt_{row['mechanic']}"):
                 st.session_state["selected_mechanic"] = row["mechanic"]
                 st.session_state["last_recommendation_card"] = None

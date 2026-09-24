@@ -10,7 +10,7 @@ import streamlit as st
 from src.execution.plan import generate_execution_plan, tasks_to_dataframe
 from src.learning.campaign_log import CampaignRecord, new_campaign_id, save_campaign_record
 from src.recommendation.campaign import generate_campaign_plan, is_llm_enabled
-from ui.components import DASH, EMPTY, badge
+from ui.components import DASH, EMPTY, badge, bullets, card, defs, grid, kicker, kicker_raw, muted, placeholder_table, progress, show
 from ui.formatters import integer, vnd
 from ui.nav import goto
 from ui.shell import render_shell
@@ -20,55 +20,39 @@ def render() -> None:
     render_shell("Execute", "Tạo kế hoạch thực thi và checklist công việc.", stage=6)
     card = st.session_state.get("last_recommendation_card")
     if card is None:
-        from ui.components import placeholder_table
-
         left, right = st.columns([0.9, 1.3], gap="medium")
         with left:
-            st.markdown(
-                f"""
-<div class="pp-card">
-  <div class="pp-kicker">Thông tin chiến dịch</div>
-  <p><b>Tên chiến dịch</b><br>{DASH}</p>
-  <p><b>Thời gian triển khai</b><br>{EMPTY}</p>
-  <p><b>Phạm vi</b><br>{DASH}</p>
-  <p><b>Ngân sách dự kiến</b><br>{DASH}</p>
-  <p><b>Cơ chế ưu đãi</b><br>{EMPTY}</p>
-</div>
-""",
-                unsafe_allow_html=True,
-            )
+            show(card(kicker("Thông tin chiến dịch") + defs([
+                ("Tên chiến dịch", DASH),
+                ("Thời gian triển khai", EMPTY),
+                ("Phạm vi", DASH),
+                ("Ngân sách dự kiến", DASH),
+                ("Cơ chế ưu đãi", EMPTY),
+            ])))
         with right:
-            st.markdown('<div class="pp-kicker" style="margin-bottom:8px">Danh sách công việc thực thi</div>', unsafe_allow_html=True)
-            st.markdown(placeholder_table(["Công việc", "Phụ trách", "Hạn hoàn thành", "Trạng thái"]), unsafe_allow_html=True)
-        st.markdown(
-            f"""
-<div class="pp-grid-2" style="margin-top:12px">
-  <div class="pp-card"><div class="pp-kicker">Mức độ sẵn sàng chiến dịch</div><div class="pp-bar" style="margin:8px 0"><div style="width:0%"></div></div><p class="pp-muted">{DASH}</p></div>
-  <div class="pp-card"><div class="pp-kicker">Checklist trước khi khởi động</div><p class="pp-muted">{EMPTY}</p></div>
-</div>
-""",
-            unsafe_allow_html=True,
-        )
+            show(kicker("Danh sách công việc thực thi"))
+            show(placeholder_table(["Công việc", "Phụ trách", "Hạn hoàn thành", "Trạng thái"]))
+        show(grid([
+            card(kicker("Mức độ sẵn sàng chiến dịch") + progress(0) + muted(DASH)),
+            card(kicker("Checklist trước khi khởi động") + muted(EMPTY)),
+        ], columns=2, style="margin-top:12px"))
         return
     profile = st.session_state["business_profile"]
     meta = st.session_state.get("last_scenario_meta") or {}
     left, right = st.columns([0.9, 1.3], gap="medium")
     with left:
         start = st.date_input("Ngày khởi chạy", value=date.today(), key="ex_start")
-        st.markdown(
-            f"""
-<div class="pp-card">
-  <div class="pp-kicker">Thông tin chiến dịch</div>
-  <p><b>Tên</b><br>{card.promotion_label}</p>
-  <p><b>Thời gian gợi ý</b><br>{card.timing_text}</p>
-  <p><b>Phạm vi</b><br>{card.product_focus}</p>
-  <p><b>Ngân sách hồ sơ</b><br>{vnd(profile.promotion_budget)}</p>
-  <p><b>Cơ chế</b><br>{card.promotion_label}</p>
-  <p class="pp-muted">Mục tiêu: {card.objective_vi}. Tồn kho đề xuất {integer(card.recommended_stock)}.</p>
-</div>
-""",
-            unsafe_allow_html=True,
-        )
+        show(card(
+            kicker("Thông tin chiến dịch")
+            + defs([
+                ("Tên", card.promotion_label),
+                ("Thời gian gợi ý", card.timing_text),
+                ("Phạm vi", card.product_focus),
+                ("Ngân sách hồ sơ", vnd(profile.promotion_budget)),
+                ("Cơ chế", card.promotion_label),
+            ])
+            + muted(f"Mục tiêu: {card.objective_vi}. Tồn kho đề xuất {integer(card.recommended_stock)}.")
+        ))
     with right:
         if st.button("Tạo kế hoạch từ phương án đã chọn", type="primary", key="build_plan"):
             tasks = generate_execution_plan(
@@ -88,7 +72,7 @@ def render() -> None:
         if plan_df is None:
             st.info("Bấm tạo kế hoạch để sinh checklist theo mốc D-7 đến D+7.")
         else:
-            edited = st.data_editor(plan_df, use_container_width=True, hide_index=True, num_rows="fixed", key="exec_editor")
+            edited = st.data_editor(plan_df, width="stretch", hide_index=True, num_rows="fixed", key="exec_editor")
             st.session_state["execution_editor_df"] = edited
             _readiness(edited)
     _actions(card, profile, start, meta)
@@ -98,21 +82,17 @@ def _readiness(edited: pd.DataFrame) -> None:
     done = int((edited["Trạng thái"] == "Hoàn thành").sum()) if "Trạng thái" in edited.columns else 0
     total = max(len(edited), 1)
     ratio = done / total
-    checks = "".join(
-        f"<li>{'✓' if row['Trạng thái'] == 'Hoàn thành' else '○'} {row['Công việc']}</li>"
+    checks = [
+        f"{'✓' if row['Trạng thái'] == 'Hoàn thành' else '○'} {row['Công việc']}"
         for _, row in edited.head(6).iterrows()
-    )
-    st.markdown(
-        f"""
-<div class="pp-card" style="margin-top:12px">
-  <div class="pp-kicker">Mức độ sẵn sàng chiến dịch {badge(f"{done}/{total}", "info")}</div>
-  <div class="pp-bar" style="margin:8px 0"><div style="width:{ratio:.0%}"></div></div>
-  <ul class="pp-list">{checks}</ul>
-  <p class="pp-muted">Đổi cột Trạng thái trong bảng rồi bấm lưu ở dưới. Đây là checklist nội bộ, chưa nối hệ thống ticket.</p>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
+    ]
+    show(card(
+        kicker_raw(f"Mức độ sẵn sàng chiến dịch {badge(f'{done}/{total}', 'info')}")
+        + progress(ratio)
+        + bullets(checks)
+        + muted("Đổi cột Trạng thái trong bảng rồi bấm lưu ở dưới. Đây là checklist nội bộ, chưa nối hệ thống ticket."),
+        style="margin-top:12px",
+    ))
 
 
 def _actions(card, profile, start, meta) -> None:
@@ -135,10 +115,10 @@ def _actions(card, profile, start, meta) -> None:
                 data=buffer.getvalue(),
                 file_name="promotionpilot_execution_plan.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
+                width="stretch",
             )
     with c2:
-        if st.button("Bắt đầu chiến dịch", type="primary", key="start_campaign", use_container_width=True):
+        if st.button("Bắt đầu chiến dịch", type="primary", key="start_campaign", width="stretch"):
             if st.session_state.get("last_execution_plan") is None:
                 st.error("Hãy tạo kế hoạch trước khi khởi chạy.")
             else:

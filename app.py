@@ -10,11 +10,18 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from src.utils.demo_access import require_demo_access
+from styles.theme import inject_css
 from ui import nav
-from ui.pages import command_center, data_workspace, decide, execute, forecast, model_info, monitor, prepare, reports, simulate, understand
+from ui.pages import command_center, decide, execute, forecast, model_info, monitor, prepare, reports, simulate, understand
 
 load_dotenv()
-st.set_page_config(page_title="PromotionPilot AI", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(
+    page_title="PromotionPilot AI",
+    page_icon=":material/insights:",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+inject_css()
 require_demo_access()
 
 pages = {
@@ -26,7 +33,6 @@ pages = {
     "decide": st.Page(decide.render, title="Decide", url_path="decide"),
     "execute": st.Page(execute.render, title="Execute", url_path="execute"),
     "monitor": st.Page(monitor.render, title="Monitor", url_path="monitor"),
-    "data": st.Page(data_workspace.render, title="Data", url_path="data"),
     "reports": st.Page(reports.render, title="Reports", url_path="reports"),
     "model": st.Page(model_info.render, title="Model Info", url_path="model-info"),
 }

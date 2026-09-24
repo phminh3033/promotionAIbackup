@@ -8,8 +8,8 @@ import streamlit as st
 
 from services.workflow import ensure_scores, run_simulation, scenario_views
 from src.promotion.mechanics import MECHANIC_LABELS_VI
-from ui.charts import grouped_bars
-from ui.components import DASH, EMPTY, badge, chart_placeholder
+from ui.charts import grouped_bars, show_chart
+from ui.components import DASH, EMPTY, badge, chart_card, grid, kicker, scenario_card, show
 from ui.formatters import integer, pct, roi_label, signed_pct
 from ui.shell import continue_button, render_shell
 
@@ -26,7 +26,7 @@ def render() -> None:
     controls, board = st.columns([0.85, 1.7], gap="medium")
     with controls:
         scope, scope_value, promo_days, gift_cost = _controls()
-        if st.button("Chạy mô phỏng", type="primary", key="run_sim", use_container_width=True):
+        if st.button("Chạy mô phỏng", type="primary", key="run_sim", width="stretch"):
             if scope_value is None:
                 st.error("Hãy chọn sản phẩm hoặc danh mục.")
             else:
@@ -46,7 +46,7 @@ def render() -> None:
     if table is not None and meta and meta.get("scope_value") == scope_value:
         _chart(table, meta)
         with st.expander("Bảng đủ mọi kịch bản đã tính"):
-            st.dataframe(_display_table(table), use_container_width=True, hide_index=True)
+            st.dataframe(_display_table(table), width="stretch", hide_index=True)
     left, right = st.columns([1, 1])
     with right:
         continue_button("Tiếp tục đến bước 5: Decide", "decide", key="sim_next")
@@ -55,19 +55,13 @@ def render() -> None:
 def _empty_simulation() -> None:
     controls, board = st.columns([0.85, 1.7], gap="medium")
     with controls:
-        st.markdown(
-            f"""
-<div class="pp-card">
-  <div class="pp-kicker">Thiết lập mô phỏng</div>
-  <p class="pp-muted">Thời gian chiến dịch<br><b>{DASH}</b></p>
-  <p class="pp-muted">Danh mục sản phẩm<br><b>{EMPTY}</b></p>
-  <p class="pp-muted">Ngân sách tối đa<br><b>{DASH}</b></p>
-  <p class="pp-muted">Giảm giá tối đa<br><b>{DASH}</b></p>
-  <p class="pp-muted">Biên lợi nhuận tối thiểu<br><b>{DASH}</b></p>
-</div>
-""",
-            unsafe_allow_html=True,
-        )
+        show(scenario_card("Thiết lập mô phỏng", "", [
+            f"Thời gian chiến dịch: {DASH}",
+            f"Danh mục sản phẩm: {EMPTY}",
+            f"Ngân sách tối đa: {DASH}",
+            f"Giảm giá tối đa: {DASH}",
+            f"Biên lợi nhuận tối thiểu: {DASH}",
+        ]))
     with board:
         _scenario_placeholders()
     _left, right = st.columns([1, 1])
@@ -76,32 +70,29 @@ def _empty_simulation() -> None:
 
 
 def _scenario_placeholders() -> None:
-    cards = []
-    for name in ("Phương án A", "Phương án B", "Phương án C"):
-        cards.append(
-            f"""
-<div class="pp-card">
-  <div class="pp-kicker">{name}</div>
-  <div class="pp-muted">Revenue lift {DASH}</div>
-  <div class="pp-muted">Profit impact {DASH}</div>
-  <div class="pp-muted">ROI {DASH}</div>
-  <div class="pp-muted">Nhu cầu hàng {DASH}</div>
-  <p class="pp-muted">{EMPTY}</p>
-</div>
-"""
-        )
-    st.markdown(f'<div class="pp-grid-3">{"".join(cards)}</div>', unsafe_allow_html=True)
-    st.markdown(
-        f'<div class="pp-card" style="margin-top:12px"><div class="pp-kicker">So sánh các phương án</div>{chart_placeholder()}</div>',
-        unsafe_allow_html=True,
-    )
+    show(grid([
+        scenario_card(name, "", [
+            f"Revenue lift {DASH}",
+            f"Profit impact {DASH}",
+            f"ROI {DASH}",
+            f"Nhu cầu hàng {DASH}",
+            EMPTY,
+        ])
+        for name in ("Phương án A", "Phương án B", "Phương án C")
+    ]))
+    show(chart_card("So sánh các phương án"))
 
 
 def _controls():
+    with st.container(border=True):
+        show(kicker("Thiết lập mô phỏng"))
+        return _control_fields()
+
+
+def _control_fields():
     df = st.session_state["clean_df"]
     caps = st.session_state["capabilities"]
     profile = st.session_state["business_profile"]
-    st.markdown('<div class="pp-card"><div class="pp-kicker">Thiết lập mô phỏng</div></div>', unsafe_allow_html=True)
     scope = st.radio("Phạm vi", ["Một SKU cụ thể", "Một Danh mục"], key="sim_scope")
     scope_value = None
     if scope == "Một Danh mục":
@@ -136,29 +127,26 @@ def _cards(table, meta) -> None:
     selected = st.session_state.get("selected_mechanic")
     for col, view in zip(cols, views):
         with col:
-            klass = "pp-card pp-selected" if selected == view["mechanic"] else "pp-card"
             conf = "Chưa có dự báo"
             if view["confidence"][0]:
                 band = view["confidence"][1]
                 conf = f"{view['confidence'][0]}" + (f" ({band[0]}–{band[1]}%)" if band else "")
             gap = "—" if view["inventory_gap"] is None else integer(view["inventory_gap"])
-            st.markdown(
-                f"""
-<div class="{klass}">
-  <div class="pp-kicker">{view["scenario"]}</div>
-  <div class="pp-opp-title">{view["label"]}</div>
-  <div class="pp-muted">Revenue lift {signed_pct(view["revenue_lift"])}</div>
-  <div class="pp-muted">Profit impact {signed_pct(view["profit_lift"])}</div>
-  <div class="pp-muted">ROI {roi_label(view["roi"])}</div>
-  <div class="pp-muted">Nhu cầu hàng {integer(view["units"])} · thiếu so với tồn {gap}</div>
-  <div style="margin-top:8px">{badge(view["risk"], RISK_KIND.get(view["risk"], "muted"))} {badge(conf, "purple")}</div>
-</div>
-""",
-                unsafe_allow_html=True,
-            )
+            show(scenario_card(
+                view["scenario"],
+                view["label"],
+                [
+                    f"Revenue lift {signed_pct(view['revenue_lift'])}",
+                    f"Profit impact {signed_pct(view['profit_lift'])}",
+                    f"ROI {roi_label(view['roi'])}",
+                    f"Nhu cầu hàng {integer(view['units'])} · thiếu so với tồn {gap}",
+                ],
+                badges_html=badge(view["risk"], RISK_KIND.get(view["risk"], "muted")) + badge(conf, "purple"),
+                selected=selected == view["mechanic"],
+            ))
             if view["rejected"]:
                 st.caption("Business rules đã loại kịch bản này.")
-            elif st.button("Chọn", key=f"pick_{view['mechanic']}", use_container_width=True):
+            elif st.button("Chọn", key=f"pick_{view['mechanic']}", width="stretch"):
                 st.session_state["selected_mechanic"] = view["mechanic"]
                 st.rerun()
 
@@ -176,9 +164,9 @@ def _chart(table, meta) -> None:
         "So sánh các phương án",
         as_percent=True,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    show_chart(fig)
     units = grouped_bars(["Sản lượng"], [(row["label"], [row["units"]]) for row in views], "Đơn vị", "Nhu cầu hàng theo kịch bản")
-    st.plotly_chart(units, use_container_width=True)
+    show_chart(units)
     del labels
 
 

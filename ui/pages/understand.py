@@ -11,29 +11,102 @@ from src.explainability.explainer import explain_trend
 from src.external_signals import competitor, events, google_trends, social_listener, weather
 from src.features.engineering import aggregate_daily
 from src.optimization.objective import OBJECTIVE_LABELS_VI, OBJECTIVE_PRIORITY_METRICS_VI, OBJECTIVES
+from src.recommendation.engine import CONFIDENCE_PCT_BY_LABEL
 from src.recommendation.timing import analyze_best_timing
-from ui.components import DASH, EMPTY, badge
+from ui.components import (
+    DASH,
+    EMPTY,
+    badge,
+    card,
+    grid,
+    info_banner,
+    insight_input_card,
+    kicker,
+    model_insight_panel,
+    muted,
+    show,
+)
+from ui.pages import data_workspace
 from ui.shell import continue_button, render_shell
 
 ENGINE = ScientificModelEngine()
+
+# Subtitle + mô tả cố định theo design system; status vẫn lấy từ session thật.
+CARD_META = {
+    "data": {
+        "title": "Data readiness",
+        "subtitle": "Kiểm tra và chuẩn bị dữ liệu",
+        "description": "Đảm bảo dữ liệu bán hàng, sản phẩm, khách hàng đã sẵn sàng cho mô hình.",
+        "icon": "database",
+        "accent": "green",
+    },
+    "goal": {
+        "title": "Business goal",
+        "subtitle": "Mục tiêu kinh doanh",
+        "description": "Xác định mục tiêu của chiến dịch như tăng doanh thu, thị phần hoặc lợi nhuận.",
+        "icon": "target",
+        "accent": "purple",
+    },
+    "local": {
+        "title": "Local context",
+        "subtitle": "Bối cảnh địa phương",
+        "description": "Hiểu đặc thù địa phương như địa bàn, đối thủ, mùa vụ, sự kiện và hành vi mua sắm.",
+        "icon": "map-pin",
+        "accent": "pink",
+    },
+    "customer": {
+        "title": "Customer insight",
+        "subtitle": "Hiểu khách hàng",
+        "description": "Phân tích hành vi, nhu cầu và phân khúc khách hàng tại từng khu vực.",
+        "icon": "users",
+        "accent": "blue",
+    },
+    "basket": {
+        "title": "Product & Basket insight",
+        "subtitle": "Hiệu suất sản phẩm",
+        "description": "Phân tích hiệu suất sản phẩm, nhóm hàng và cơ hội cross-sell, basket.",
+        "icon": "package",
+        "accent": "orange",
+    },
+    "segments": {
+        "title": "Main customer segments",
+        "subtitle": "Phân khúc khách hàng chính",
+        "description": "Xác định các phân khúc khách hàng quan trọng cần tập trung.",
+        "icon": "users-round",
+        "accent": "purple",
+    },
+    "groups": {
+        "title": "Potential product groups",
+        "subtitle": "Nhóm sản phẩm tiềm năng",
+        "description": "Tìm ra nhóm sản phẩm có cơ hội tăng trưởng cao.",
+        "icon": "boxes",
+        "accent": "blue",
+    },
+    "signals": {
+        "title": "Local market signals",
+        "subtitle": "Tín hiệu thị trường",
+        "description": "Phân tích xu hướng thị trường, đối thủ, sự kiện và các yếu tố tác động tại địa phương.",
+        "icon": "activity",
+        "accent": "pink",
+    },
+}
 
 
 def render() -> None:
     render_shell(
         "Understand the market",
-        "Hiểu rõ thị trường, khách hàng và cơ hội tăng trưởng của bạn.",
+        "Hiểu rõ thị trường, khách hàng và cơ hội tăng trưởng của bạn",
         stage=1,
     )
-    st.markdown(
-        '<div class="pp-banner">Cần hoàn thành các phần dưới đây để mô hình dự báo và mô phỏng bám đúng bối cảnh kinh doanh. Thiếu dữ liệu thì module tương ứng được ghi rõ, không bịa kết quả.</div>',
-        unsafe_allow_html=True,
+    show(
+        info_banner(
+            "Cần 3–5 đầu vào trước khi chạy dự báo",
+            "Hãy hoàn thành các phần dưới đây để giúp mô hình hiểu rõ thị trường, khách hàng và mục tiêu của bạn.",
+        )
     )
     _cards()
-    _detail()
     _insight()
-    left, right = st.columns([1, 1])
-    with right:
-        continue_button("Tiếp tục đến bước 2: Forecast", "forecast", key="und_next")
+    _bottom_actions()
 
 
 def _status_cards() -> list[dict]:
@@ -42,78 +115,138 @@ def _status_cards() -> list[dict]:
     local_ctx = st.session_state["local_context"]
     seg = st.session_state.get("segmentation_result")
     basket = st.session_state.get("basket_result")
+    order = list(CARD_META.keys())
     if caps is None:
-        titles = [
-            ("data", "Data readiness", "Kiểm tra và chuẩn bị dữ liệu bán hàng."),
-            ("goal", "Business goal", "Mục tiêu kinh doanh của chiến dịch."),
-            ("local", "Local context", "Bối cảnh địa phương, sự kiện, khách khu vực."),
-            ("customer", "Customer insight", "Phân tích RFM và phân cụm khách hàng."),
-            ("basket", "Product & Basket insight", "Xếp hạng sản phẩm và luật mua kèm."),
-            ("segments", "Main customer segments", "Nhóm khách hàng chính."),
-            ("groups", "Potential product groups", "Nhóm sản phẩm có cơ hội mua kèm."),
-            ("signals", "Local market signals", "Tín hiệu thị trường bên ngoài."),
+        return [
+            {
+                "id": key,
+                **CARD_META[key],
+                "state": EMPTY,
+                "ok": False,
+                "action": "Phân tích ngay →" if key == "groups" else "Xem chi tiết →",
+                "accent_cta": key == "groups",
+            }
+            for key in order
         ]
-        return [{"id": key, "title": title, "desc": desc, "state": EMPTY, "ok": False} for key, title, desc in titles]
-    return [
-        {"id": "data", "title": "Data readiness", "desc": "Kiểm tra và chuẩn bị dữ liệu bán hàng.", "state": "Hoàn thành" if report else "Chưa hoàn thành", "ok": bool(report)},
-        {"id": "goal", "title": "Business goal", "desc": OBJECTIVE_LABELS_VI[st.session_state["objective"]], "state": "Sẵn sàng", "ok": True},
-        {"id": "local", "title": "Local context", "desc": local_ctx.summary_text() if local_ctx.has_any_context() else "Bối cảnh địa phương, sự kiện, khách khu vực.", "state": "Hoàn thành" if local_ctx.has_any_context() else "Chưa hoàn thành", "ok": local_ctx.has_any_context()},
-        {"id": "customer", "title": "Customer insight", "desc": "Phân tích RFM và phân cụm khách hàng." if caps.has_customer else "Cần cột mã khách hàng.", "state": "Hoàn thành" if seg else ("Không khả dụng" if not caps.has_customer else "Chưa hoàn thành"), "ok": bool(seg)},
-        {"id": "basket", "title": "Product & Basket insight", "desc": "Xếp hạng sản phẩm và luật mua kèm." if caps.has_transaction else "Cần mã giao dịch để phân tích giỏ hàng.", "state": "Hoàn thành" if basket else ("Không khả dụng" if not caps.has_transaction else "Chưa hoàn thành"), "ok": bool(basket)},
-        {"id": "segments", "title": "Main customer segments", "desc": seg.message if seg else "Chạy Customer insight để có nhóm khách.", "state": "Hoàn thành" if seg and seg.sufficient_data else "Chưa hoàn thành", "ok": bool(seg and seg.sufficient_data)},
-        {"id": "groups", "title": "Potential product groups", "desc": f"{len(basket.rules)} luật kết hợp." if basket is not None and basket.sufficient_data else "Chạy phân tích giỏ hàng để thấy nhóm mua kèm.", "state": "Hoàn thành" if basket is not None and basket.sufficient_data else "Chưa hoàn thành", "ok": bool(basket is not None and basket.sufficient_data)},
-        {"id": "signals", "title": "Local market signals", "desc": "Nguồn ngoài (thời tiết, xu hướng, đối thủ) chưa được kết nối.", "state": "Chưa kết nối", "ok": False},
-    ]
+    states = {
+        "data": ("Hoàn thành" if report else "Chưa hoàn thành", bool(report)),
+        "goal": ("Sẵn sàng", True),
+        "local": (
+            "Hoàn thành" if local_ctx.has_any_context() else "Chưa hoàn thành",
+            local_ctx.has_any_context(),
+        ),
+        "customer": (
+            "Hoàn thành"
+            if seg
+            else ("Không khả dụng" if not caps.has_customer else "Chưa hoàn thành"),
+            bool(seg),
+        ),
+        "basket": (
+            "Hoàn thành"
+            if basket
+            else ("Không khả dụng" if not caps.has_transaction else "Chưa hoàn thành"),
+            bool(basket),
+        ),
+        "segments": (
+            "Hoàn thành" if seg and seg.sufficient_data else "Chưa hoàn thành",
+            bool(seg and seg.sufficient_data),
+        ),
+        "groups": (
+            "Hoàn thành" if basket is not None and basket.sufficient_data else "Chưa hoàn thành",
+            bool(basket is not None and basket.sufficient_data),
+        ),
+        "signals": ("Chưa kết nối", False),
+    }
+    cards = []
+    for key in order:
+        state, ok = states[key]
+        action = "Phân tích ngay →" if key == "groups" and not ok else "Xem chi tiết →"
+        cards.append(
+            {
+                "id": key,
+                **CARD_META[key],
+                "state": state,
+                "ok": ok,
+                "action": action,
+                "accent_cta": key == "groups" and not ok,
+            }
+        )
+    return cards
 
 
 def _cards() -> None:
-    blocks = []
-    for card in _status_cards():
-        kind = "ok" if card["ok"] else "warn"
-        blocks.append(
-            f"""
-<div class="pp-card">
-  <div class="pp-kicker">{card["title"]}</div>
-  <p class="pp-muted">{card["desc"]}</p>
-  <div style="margin-top:10px">{badge(card["state"], kind)}</div>
-</div>
-"""
-        )
-    st.markdown(f'<div class="pp-grid-4">{"".join(blocks)}</div>', unsafe_allow_html=True)
-    choice = st.selectbox(
-        "Mở chi tiết",
-        [card["title"] for card in _status_cards()],
-        key="understand_focus_label",
-    )
-    st.session_state["understand_focus"] = next(card["id"] for card in _status_cards() if card["title"] == choice)
+    cards = _status_cards()
+    for start in range(0, len(cards), 4):
+        columns = st.columns(4, gap="medium")
+        for column, item in zip(columns, cards[start : start + 4]):
+            with column, st.container(border=True):
+                show(
+                    insight_input_card(
+                        title=item["title"],
+                        subtitle=item["subtitle"],
+                        description=item["description"],
+                        status=item["state"],
+                        accent=item["accent"],
+                        icon_name=item["icon"],
+                        ok=item["ok"],
+                    )
+                )
+                if st.button(item["action"], type="secondary", key=f"open_{item['id']}", width="stretch"):
+                    _open_detail(item["id"])
 
 
-def _detail() -> None:
-    focus = st.session_state.get("understand_focus") or "goal"
-    st.markdown('<div class="pp-hr"></div>', unsafe_allow_html=True)
-    if focus == "goal":
-        _goal()
-    elif focus == "local":
-        _local()
-    elif focus == "customer" or focus == "segments":
-        _customers()
-    elif focus == "basket" or focus == "groups":
-        _basket()
-    elif focus == "signals":
-        _signals()
+def _bottom_actions() -> None:
+    left, right = st.columns([1, 2], gap="medium")
+    with left:
+        if st.button("Lưu nháp", type="secondary", key="und_draft", width="stretch"):
+            st.session_state["understand_draft_saved"] = True
+            st.toast("Đã lưu nháp trong phiên hiện tại.")
+    with right:
+        continue_button("Tiếp tục đến Bước 2: Forecast →", "forecast", key="und_next")
+
+
+def _open_detail(card_id: str) -> None:
+    if card_id == "data":
+        data_workspace.open_modal()
+    elif card_id == "goal":
+        _dlg_goal()
+    elif card_id == "local":
+        _dlg_local()
+    elif card_id in {"customer", "segments"}:
+        _dlg_customers()
+    elif card_id in {"basket", "groups"}:
+        _dlg_basket()
     else:
-        report = st.session_state.get("quality_report")
-        if report is None:
-            st.markdown(f'<div class="pp-card"><div class="pp-kicker">Data readiness</div><p class="pp-muted">{EMPTY}</p><div class="pp-value">{DASH}</div></div>', unsafe_allow_html=True)
-            return
-        st.markdown(
-            f'<div class="pp-card"><div class="pp-kicker">Data readiness</div><p class="pp-muted">Điểm {report.score}/100 — {report.score_label}. Khoảng thời gian {report.date_min.date() if report.date_min is not None else "—"} → {report.date_max.date() if report.date_max is not None else "—"}.</p></div>',
-            unsafe_allow_html=True,
-        )
+        _dlg_signals()
+
+
+@st.dialog("Business goal", width="large")
+def _dlg_goal() -> None:
+    _goal()
+
+
+@st.dialog("Local context", width="large")
+def _dlg_local() -> None:
+    _local()
+
+
+@st.dialog("Customer insight", width="large")
+def _dlg_customers() -> None:
+    _customers()
+
+
+@st.dialog("Product & Basket insight", width="large")
+def _dlg_basket() -> None:
+    _basket()
+
+
+@st.dialog("Local market signals", width="large")
+def _dlg_signals() -> None:
+    _signals()
 
 
 def _goal() -> None:
-    st.markdown('<div class="pp-section"><div><h2>Mục tiêu kinh doanh</h2><p>Mục tiêu này được dùng khi chấm điểm kịch bản khuyến mãi.</p></div></div>', unsafe_allow_html=True)
+    st.caption("Mục tiêu này được dùng khi chấm điểm kịch bản khuyến mãi.")
     objective = st.radio(
         "Mục tiêu",
         OBJECTIVES,
@@ -136,13 +269,13 @@ def _goal() -> None:
 
 def _local() -> None:
     ctx = st.session_state["local_context"]
-    st.markdown('<div class="pp-section"><div><h2>Bối cảnh địa phương</h2><p>Nhập thủ công. Nguồn tự động chưa kết nối nên không có số liệu ngoài.</p></div></div>', unsafe_allow_html=True)
+    st.caption("Nhập thủ công. Nguồn tự động chưa kết nối nên không có số liệu ngoài.")
     store_name = st.text_input("Tên cửa hàng / khu vực", value=ctx.store_name, key="lc_store")
     events_sel = st.multiselect("Sự kiện kinh doanh", BUSINESS_EVENTS, default=ctx.business_events, key="lc_events")
     customers = st.multiselect("Khách hàng khu vực", CUSTOMER_CONTEXTS, default=ctx.customer_contexts, key="lc_customers")
     stores = st.multiselect("Tình hình cửa hàng", STORE_CONTEXTS, default=ctx.store_contexts, key="lc_stores")
     note = st.text_area("Ghi chú", value=ctx.free_text, key="lc_note")
-    if st.button("Lưu bối cảnh", key="save_local"):
+    if st.button("Lưu bối cảnh", type="primary", key="save_local"):
         st.session_state["local_context"] = LocalContext(
             store_name=store_name,
             business_events=events_sel,
@@ -150,13 +283,13 @@ def _local() -> None:
             store_contexts=stores,
             free_text=note,
         )
-        st.success("Đã lưu bối cảnh cho phiên này.")
+        st.rerun()
 
 
 def _customers() -> None:
     caps = st.session_state.get("capabilities")
     if caps is None or st.session_state.get("clean_df") is None:
-        st.markdown(f'<div class="pp-card"><div class="pp-kicker">Customer insight</div><p class="pp-muted">{EMPTY}</p><div class="pp-value">{DASH}</div></div>', unsafe_allow_html=True)
+        show(card(kicker("Customer insight") + muted(EMPTY) + f'<div class="pp-value">{DASH}</div>'))
         return
     if not caps.has_customer:
         st.warning("Dữ liệu không có mã khách hàng nên không chạy RFM.")
@@ -170,14 +303,14 @@ def _customers() -> None:
         seg = st.session_state["segmentation_result"]
         st.info(seg.message)
         if seg.sufficient_data and not seg.cluster_summary.empty:
-            st.dataframe(seg.cluster_summary, use_container_width=True, hide_index=True)
+            st.dataframe(seg.cluster_summary, width="stretch", hide_index=True)
 
 
 def _basket() -> None:
     caps = st.session_state.get("capabilities")
     df = st.session_state.get("clean_df")
     if caps is None or df is None:
-        st.markdown(f'<div class="pp-card"><div class="pp-kicker">Product &amp; Basket insight</div><p class="pp-muted">{EMPTY}</p><div class="pp-value">{DASH}</div></div>', unsafe_allow_html=True)
+        show(card(kicker("Product & Basket insight") + muted(EMPTY) + f'<div class="pp-value">{DASH}</div>'))
         return
     stats = (
         df.groupby("product_id")
@@ -186,7 +319,7 @@ def _basket() -> None:
         .sort_values("doanh_thu", ascending=False)
         .head(8)
     )
-    st.dataframe(stats, use_container_width=True, hide_index=True)
+    st.dataframe(stats, width="stretch", hide_index=True)
     if not caps.has_transaction:
         st.warning("Không có mã giao dịch nên không phân tích được giỏ hàng.")
         return
@@ -201,39 +334,40 @@ def _basket() -> None:
         result = st.session_state["basket_result"]
         st.info(result.message)
         if result.sufficient_data:
-            st.dataframe(result.rules.head(12), use_container_width=True, hide_index=True)
+            st.dataframe(result.rules.head(12), width="stretch", hide_index=True)
 
 
 def _signals() -> None:
-    cols = st.columns(5)
-    for col, module in zip(cols, [social_listener, weather, competitor, google_trends, events]):
+    st.caption("Kiến trúc sẵn sàng cho nguồn ngoài. Bản này chưa kết nối nên không hiển thị số liệu giả.")
+    blocks = []
+    for module in (social_listener, weather, competitor, google_trends, events):
         status = module.get_status()
-        with col:
-            st.markdown(
-                f'<div class="pp-card"><div class="pp-kicker">{status.source_name}</div><p class="pp-muted">{status.message}</p></div>',
-                unsafe_allow_html=True,
-            )
+        blocks.append(card(kicker(status.source_name) + muted(status.message) + badge("Chưa kết nối", "muted")))
+    show(grid(blocks, columns=2))
 
 
 def _insight() -> None:
     df = st.session_state.get("clean_df")
     if df is None or getattr(df, "empty", True):
-        st.markdown(
-            f"""
-<div class="pp-card" style="margin-top:14px">
-  <div class="pp-section"><div><h2>Model Insight</h2><p>Diễn giải từ dữ liệu và mô hình đã chạy.</p></div></div>
-  <p class="pp-muted">{EMPTY}</p>
-  <div class="pp-grid-2">
-    <div><div class="pp-kicker">Yếu tố đang có trong dữ liệu</div><ul class="pp-list"><li>{EMPTY}</li></ul></div>
-    <div class="pp-metric-mini"><div class="l">Độ tin cậy dự báo trong phiên</div><div class="v">{DASH}</div></div>
-  </div>
-</div>
-""",
-            unsafe_allow_html=True,
+        show(
+            model_insight_panel(
+                insight_text=EMPTY,
+                factors=[],
+                confidence_pct=None,
+                confidence_note="Chưa có dữ liệu để ước lượng độ tin cậy.",
+            )
         )
         return
+
     text = "Chưa đủ lịch sử để nêu một insight định lượng."
-    factors = []
+    factors: list[tuple[str, float]] = []
+    months_span = 0
+    try:
+        span_days = int((df["date"].max() - df["date"].min()).days)
+        months_span = max(1, round(span_days / 30))
+    except Exception:
+        months_span = 0
+
     try:
         cutoff = df["date"].max() - pd.Timedelta(days=30)
         recent = df[df["date"] >= cutoff]["quantity"].sum()
@@ -241,34 +375,48 @@ def _insight() -> None:
         if not prior_df.empty and prior_df["quantity"].sum():
             change = (recent - prior_df["quantity"].sum()) / prior_df["quantity"].sum()
             text = explain_trend(float(change))
-            factors.append(("Sản lượng 30 ngày gần nhất", abs(float(change))))
+            factors.append(("Biến động sản lượng gần đây", abs(float(change))))
     except Exception:
         pass
-    timing = None
+
     try:
         timing = analyze_best_timing(aggregate_daily(df))
         if timing.seasonal_note:
-            factors.append(("Mùa vụ trong dữ liệu bán", 0.2))
-        factors.append((timing.best_weekdays_reason, 0.15))
+            factors.append(("Mùa vụ trong dữ liệu bán", 0.35))
+        if timing.best_weekdays_reason:
+            factors.append((timing.best_weekdays_reason, 0.25))
     except Exception:
-        timing = None
-    confidence = "Chưa chạy dự báo"
+        pass
+
+    local_ctx = st.session_state.get("local_context")
+    if local_ctx is not None and local_ctx.has_any_context():
+        factors.append(("Bối cảnh địa phương đã nhập", 0.15))
+
+    confidence_pct = None
+    confidence_note = "Chưa chạy dự báo trong phiên này."
     cache = st.session_state.get("forecast_cache") or {}
     if cache:
         result = next(iter(cache.values()))
-        confidence = f"{result.confidence} · WAPE {result.wape:.0%}" if result.wape == result.wape else result.confidence
         text = result.explanation.replace("**", "")
-    factor_html = "".join(f"<li>{name}</li>" for name, _ in factors[:4]) or "<li>Chưa có yếu tố ngoài dữ liệu bán hàng.</li>"
-    st.markdown(
-        f"""
-<div class="pp-card" style="margin-top:14px">
-  <div class="pp-section"><div><h2>Model Insight</h2><p>Diễn giải từ dữ liệu và mô hình đã chạy. Không dùng trợ lý hội thoại.</p></div></div>
-  <p>{text}</p>
-  <div class="pp-grid-2">
-    <div><div class="pp-kicker">Yếu tố đang có trong dữ liệu</div><ul class="pp-list">{factor_html}</ul></div>
-    <div class="pp-metric-mini"><div class="l">Độ tin cậy dự báo trong phiên</div><div class="v">{confidence}</div></div>
-  </div>
-</div>
-""",
-        unsafe_allow_html=True,
+        band = CONFIDENCE_PCT_BY_LABEL.get(result.confidence)
+        if band:
+            confidence_pct = int(round((band[0] + band[1]) / 2))
+        elif result.wape == result.wape:
+            confidence_pct = int(max(0, min(99, round(100 * (1 - float(result.wape))))))
+        note_bits = [f"Nhãn mô hình: {result.confidence}"]
+        if result.wape == result.wape:
+            note_bits.append(f"WAPE {result.wape:.0%}")
+        if months_span:
+            note_bits.append(f"dựa trên khoảng {months_span} tháng dữ liệu")
+        confidence_note = " · ".join(note_bits)
+    elif months_span:
+        confidence_note = f"Đã có khoảng {months_span} tháng dữ liệu. Chạy Forecast để có độ tin cậy mô hình."
+
+    show(
+        model_insight_panel(
+            insight_text=text,
+            factors=factors[:5],
+            confidence_pct=confidence_pct,
+            confidence_note=confidence_note,
+        )
     )

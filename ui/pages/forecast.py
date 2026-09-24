@@ -5,8 +5,8 @@ import pandas as pd
 import streamlit as st
 
 from services.workflow import run_forecast
-from ui.charts import time_series
-from ui.components import DASH, EMPTY, badge, chart_placeholder
+from ui.charts import show_chart, time_series
+from ui.components import DASH, EMPTY, badge, card, chart_card, esc, kicker, metric_mini, muted, show
 from ui.formatters import integer, pct, signed_pct
 from ui.shell import continue_button, render_shell
 
@@ -50,27 +50,10 @@ def _empty_forecast() -> None:
         with tab:
             chart, summary = st.columns([1.7, 0.9])
             with chart:
-                st.markdown(
-                    f'<div class="pp-card"><div class="pp-kicker">{title}</div>{chart_placeholder()}</div>',
-                    unsafe_allow_html=True,
-                )
+                show(chart_card(title))
             with summary:
-                st.markdown(
-                    f"""
-<div class="pp-card">
-  <div class="pp-kicker">Kết quả dự báo</div>
-  <div class="pp-metric-mini"><div class="l">Tổng kỳ dự báo</div><div class="v">{DASH}</div></div>
-  <div class="pp-metric-mini" style="margin-top:8px"><div class="l">So với nhịp lịch sử gần</div><div class="v">{DASH}</div></div>
-  <div class="pp-metric-mini" style="margin-top:8px"><div class="l">Khoảng tin cậy</div><div class="v">{DASH}</div></div>
-  <p class="pp-muted" style="margin-top:8px">{EMPTY}</p>
-</div>
-""",
-                    unsafe_allow_html=True,
-                )
-    st.markdown(
-        f'<div class="pp-card" style="margin-top:12px"><div class="pp-kicker">Insight từ mô hình</div><p class="pp-muted">{EMPTY}</p></div>',
-        unsafe_allow_html=True,
-    )
+                show(_forecast_summary(DASH, DASH, DASH, "", EMPTY))
+    show(card(kicker("Insight từ mô hình") + muted(EMPTY), style="margin-top:12px"))
     _col, right = st.columns([1, 1])
     with right:
         continue_button("Tiếp tục đến bước 3: Prepare", "prepare", key="fc_next_empty")
@@ -125,33 +108,40 @@ def _panel(scope, scope_value, horizon, label, metric, y_title) -> None:
             y_title=y_title,
             title=label,
         )
-        st.plotly_chart(fig, use_container_width=True)
+        show_chart(fig)
     with summary:
         expected = float(pd.Series(result.yhat).sum())
         hist_sum = float(pd.Series(history.values).sum()) or None
         growth = (expected / (hist_sum / max(len(history), 1) * len(result.yhat)) - 1) if hist_sum else None
         low, high = float(pd.Series(result.yhat_lower).sum()), float(pd.Series(result.yhat_upper).sum())
-        st.markdown(
-            f"""
-<div class="pp-card">
-  <div class="pp-kicker">Kết quả dự báo</div>
-  <div class="pp-metric-mini"><div class="l">Tổng kỳ dự báo</div><div class="v">{integer(expected)}</div></div>
-  <div class="pp-metric-mini" style="margin-top:8px"><div class="l">So với nhịp lịch sử gần</div><div class="v">{signed_pct(growth) if growth is not None else "—"}</div></div>
-  <div class="pp-metric-mini" style="margin-top:8px"><div class="l">Khoảng tin cậy (~80%)</div><div class="v" style="font-size:14px">{integer(low)} – {integer(high)}</div></div>
-  <div style="margin-top:8px">{badge(result.confidence, "ok" if result.confidence == "Cao" else "warn")} <span class="pp-muted">WAPE {pct(result.wape, 1) if pd.notna(result.wape) else "—"} · {result.model_name}</span></div>
-</div>
-""",
-            unsafe_allow_html=True,
-        )
-    st.markdown(
-        f'<div class="pp-card" style="margin-top:12px"><div class="pp-kicker">Insight từ mô hình</div><p class="pp-muted">{result.explanation}</p></div>',
-        unsafe_allow_html=True,
-    )
+        meta = f"WAPE {pct(result.wape, 1) if pd.notna(result.wape) else '—'} · {result.model_name}"
+        show(_forecast_summary(
+            integer(expected),
+            signed_pct(growth) if growth is not None else "—",
+            f"{integer(low)} – {integer(high)}",
+            badge(result.confidence, "ok" if result.confidence == "Cao" else "warn"),
+            meta,
+            band_label="Khoảng tin cậy (~80%)",
+        ))
+    show(card(kicker("Insight từ mô hình") + muted(result.explanation), style="margin-top:12px"))
     if not result.all_model_scores.empty:
         with st.expander("Bảng backtest các mô hình đã thử"):
             scores = result.all_model_scores.copy()
             if "WAPE" in scores.columns:
                 scores["WAPE"] = scores["WAPE"].map(lambda value: f"{value:.1%}" if pd.notna(value) else "—")
-            st.dataframe(scores, use_container_width=True, hide_index=True)
+            st.dataframe(scores, width="stretch", hide_index=True)
     if not result.data_sufficient:
         st.warning("Chuỗi chưa đủ dài để backtest chắc chắn. Hãy xem dự báo này là tham khảo sơ bộ.")
+
+
+def _forecast_summary(total: str, growth: str, band: str, badge_html: str, note: str, band_label: str = "Khoảng tin cậy") -> str:
+    meta = f'<div class="pp-meta">{badge_html}<span class="pp-muted">{esc(note)}</span></div>' if badge_html else muted(note)
+    return card(
+        kicker("Kết quả dự báo")
+        + '<div class="pp-stack">'
+        + metric_mini("Tổng kỳ dự báo", total)
+        + metric_mini("So với nhịp lịch sử gần", growth)
+        + metric_mini(band_label, band, small=True)
+        + "</div>"
+        + meta
+    )

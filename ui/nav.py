@@ -5,18 +5,18 @@ import streamlit as st
 
 _PAGES: dict = {}
 
+# key, nhãn, icon Lucide, url_path — url_path phải khớp st.Page trong app.py
 NAV = [
-    ("command", "Command Center", ":material/home:"),
-    ("understand", "①  Understand", ":material/travel_explore:"),
-    ("forecast", "②  Forecast", ":material/monitoring:"),
-    ("prepare", "③  Prepare", ":material/inventory_2:"),
-    ("simulate", "④  Simulate", ":material/science:"),
-    ("decide", "⑤  Decide", ":material/ads_click:"),
-    ("execute", "⑥  Execute", ":material/rocket_launch:"),
-    ("monitor", "⑦  Monitor", ":material/query_stats:"),
-    ("data", "Data", ":material/database:"),
-    ("reports", "Reports", ":material/description:"),
-    ("model", "Model Info", ":material/info:"),
+    ("command", "Command Center", "home", "command-center"),
+    ("understand", "Understand", "compass", "understand"),
+    ("forecast", "Forecast", "chart", "forecast"),
+    ("prepare", "Prepare", "package", "prepare"),
+    ("simulate", "Simulate", "flask", "simulate"),
+    ("decide", "Decide", "target", "decide"),
+    ("execute", "Execute", "rocket", "execute"),
+    ("monitor", "Monitor", "activity", "monitor"),
+    ("reports", "Reports", "file", "reports"),
+    ("model", "Model Info", "info", "model-info"),
 ]
 
 

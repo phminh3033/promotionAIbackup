@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from services.workflow import recent_demand, run_inventory, stock_status
-from ui.components import DASH, EMPTY, badge
+from ui.components import DASH, EMPTY, badge, banner, bullets, card, data_table, esc, kicker, kpi_grid, muted, placeholder_table, show, stat_card
 from ui.formatters import integer, pct, vnd
 from ui.shell import continue_button, render_shell
 
@@ -21,21 +21,14 @@ def render() -> None:
     from src.utils.state import has_data
 
     if not has_data():
-        st.markdown(
-            f"""
-<div class="pp-kpi-grid">
-  <div class="pp-card"><div class="pp-kicker">Tồn kho</div><div class="pp-value">{DASH}</div><div class="pp-muted">{EMPTY}</div></div>
-  <div class="pp-card"><div class="pp-kicker">Ngân sách</div><div class="pp-value">{DASH}</div><div class="pp-muted">{EMPTY}</div></div>
-  <div class="pp-card"><div class="pp-kicker">Biên lợi nhuận</div><div class="pp-value">{DASH}</div><div class="pp-muted">{EMPTY}</div></div>
-  <div class="pp-card"><div class="pp-kicker">Năng lực vận hành</div><div class="pp-value">{DASH}</div><div class="pp-muted">{EMPTY}</div></div>
-</div>
-""",
-            unsafe_allow_html=True,
-        )
-        from ui.components import placeholder_table
-
-        st.markdown(placeholder_table(["Sản phẩm", "Danh mục", "Tồn kho hiện tại", "Nhu cầu dự báo", "Chênh lệch", "Trạng thái"]), unsafe_allow_html=True)
-        st.markdown(f'<div class="pp-card" style="margin-top:12px"><div class="pp-kicker">Vấn đề cần xử lý</div><p class="pp-muted">{EMPTY}</p></div>', unsafe_allow_html=True)
+        show(kpi_grid([
+            stat_card("Tồn kho", DASH, EMPTY),
+            stat_card("Ngân sách", DASH, EMPTY),
+            stat_card("Biên lợi nhuận", DASH, EMPTY),
+            stat_card("Năng lực vận hành", DASH, EMPTY),
+        ]))
+        show(placeholder_table(["Sản phẩm", "Danh mục", "Tồn kho hiện tại", "Nhu cầu dự báo", "Chênh lệch", "Trạng thái"]))
+        show(card(kicker("Vấn đề cần xử lý") + muted(EMPTY), style="margin-top:12px"))
         _left, right = st.columns([1, 1])
         with right:
             continue_button("Tiếp tục sang Simulate", "simulate", key="prep_next_empty")
@@ -56,7 +49,7 @@ def render() -> None:
     if not caps.has_inventory:
         st.warning("Chưa có cột tồn kho. Hệ thống chỉ hiện nhu cầu gần đây, không tính số lượng cần nhập.")
         demand = recent_demand(st.session_state["clean_df"])
-        st.dataframe(demand.sort_values("avg_daily_demand", ascending=False), use_container_width=True, hide_index=True)
+        st.dataframe(demand.sort_values("avg_daily_demand", ascending=False), width="stretch", hide_index=True)
     elif st.button("Tính mức sẵn sàng tồn kho", type="primary", key="run_inv"):
         with st.spinner("Đang lập kế hoạch tồn kho..."):
             run_inventory(int(lead), int(safety))
@@ -88,62 +81,54 @@ def _kpis(plan, profile, caps) -> None:
         if "gross_profit" in df.columns and revenue:
             margin_txt = pct(float(df["gross_profit"].sum()) / revenue, 1)
     ops = "Sẵn sàng" if plan is not None and not plan.empty and int((plan["stockout_risk"] == "HIGH").sum()) == 0 else "Cần rà soát"
-    st.markdown(
-        f"""
-<div class="pp-kpi-grid">
-  <div class="pp-card"><div class="pp-kicker">Tồn kho</div><div class="pp-value">{ready}</div><div class="pp-muted">{ready_note}</div></div>
-  <div class="pp-card"><div class="pp-kicker">Ngân sách</div><div class="pp-value" style="font-size:22px">{vnd(profile.promotion_budget)}</div><div class="pp-muted">Ngân sách khuyến mãi trong hồ sơ</div></div>
-  <div class="pp-card"><div class="pp-kicker">Biên lợi nhuận</div><div class="pp-value">{margin_txt}</div><div class="pp-muted">Thực tế nếu có giá vốn, không thì margin mục tiêu {pct(profile.target_margin_pct, 0)}</div></div>
-  <div class="pp-card"><div class="pp-kicker">Năng lực vận hành</div><div class="pp-value" style="font-size:22px">{ops}</div><div class="pp-muted">{gap_note or "Dựa trên số SKU rủi ro hết hàng cao."}</div></div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
+    show(kpi_grid([
+        stat_card("Tồn kho", ready, ready_note),
+        stat_card("Ngân sách", vnd(profile.promotion_budget), "Ngân sách khuyến mãi trong hồ sơ", compact=True),
+        stat_card("Biên lợi nhuận", margin_txt, f"Thực tế nếu có giá vốn, không thì margin mục tiêu {pct(profile.target_margin_pct, 0)}"),
+        stat_card("Năng lực vận hành", ops, gap_note or "Dựa trên số SKU rủi ro hết hàng cao.", compact=True),
+    ]))
 
 
 def _table(plan: pd.DataFrame) -> None:
-    show = plan.copy()
-    show["Trạng thái"] = show.apply(stock_status, axis=1)
-    show["Nhu cầu lead time"] = show["expected_demand_leadtime"]
-    show["Chênh lệch"] = show["recommended_order_qty"]
+    frame = plan.copy()
+    frame["Trạng thái"] = frame.apply(stock_status, axis=1)
+    frame["Nhu cầu lead time"] = frame["expected_demand_leadtime"]
+    frame["Chênh lệch"] = frame["recommended_order_qty"]
     query = st.text_input("Tìm sản phẩm", key="prep_search")
     if query:
-        show = show[show["product_id"].astype(str).str.contains(query, case=False, na=False)]
+        frame = frame[frame["product_id"].astype(str).str.contains(query, case=False, na=False)]
     rows = []
-    for _, row in show.sort_values("recommended_order_qty", ascending=False).head(40).iterrows():
+    for _, row in frame.sort_values("recommended_order_qty", ascending=False).head(40).iterrows():
         status = row["Trạng thái"]
-        category = row["category"] if "category" in show.columns and pd.notna(row.get("category")) else "—"
-        rows.append(
-            "<tr>"
-            f"<td>{row['product_id']}</td><td>{category}</td>"
-            f"<td>{integer(row['current_inventory'])}</td><td>{integer(row['Nhu cầu lead time'])}</td>"
-            f"<td>{integer(row['Chênh lệch'])}</td><td>{badge(status, STATUS_KIND[status])}</td>"
-            "</tr>"
-        )
-    st.markdown(
-        '<div class="pp-card" style="overflow-x:auto"><div class="pp-kicker">Sản phẩm trọng tâm</div>'
-        '<table class="pp-table"><thead><tr><th>Sản phẩm</th><th>Danh mục</th><th>Tồn kho hiện tại</th>'
-        f'<th>Nhu cầu lead time</th><th>Cần nhập</th><th>Trạng thái</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div>',
-        unsafe_allow_html=True,
-    )
+        category = row["category"] if "category" in frame.columns and pd.notna(row.get("category")) else "—"
+        rows.append([
+            esc(row["product_id"]),
+            esc(category),
+            esc(integer(row["current_inventory"])),
+            esc(integer(row["Nhu cầu lead time"])),
+            esc(integer(row["Chênh lệch"])),
+            badge(status, STATUS_KIND[status]),
+        ])
+    show(data_table(
+        ["Sản phẩm", "Danh mục", "Tồn kho hiện tại", "Nhu cầu lead time", "Cần nhập", "Trạng thái"],
+        rows,
+        title="Sản phẩm trọng tâm",
+        raw=True,
+    ))
 
 
 def _issues(plan: pd.DataFrame, profile) -> None:
     issues = plan[plan["stockout_risk"] == "HIGH"].sort_values("recommended_order_qty", ascending=False).head(3)
     if issues.empty:
-        st.markdown('<div class="pp-banner good">Không có SKU nào ở mức rủi ro hết hàng cao với tham số hiện tại.</div>', unsafe_allow_html=True)
+        show(banner("Không có SKU nào ở mức rủi ro hết hàng cao với tham số hiện tại.", "good"))
         return
-    items = "".join(
-        f"<li>{row.product_id}: cần nhập thêm {integer(row.recommended_order_qty)} để phủ lead time và safety stock.</li>"
+    items = [
+        f"{row.product_id}: cần nhập thêm {integer(row.recommended_order_qty)} để phủ lead time và safety stock."
         for row in issues.itertuples()
-    )
-    budget_note = ""
+    ]
     table = st.session_state.get("last_scenario_table")
     if table is not None and "chi_phi_khuyen_mai" in table.columns:
         cost = float(table["chi_phi_khuyen_mai"].max())
         if profile.promotion_budget and cost > profile.promotion_budget:
-            budget_note = "<li>Chi phí khuyến mãi của một kịch bản đã mô phỏng vượt ngân sách hồ sơ.</li>"
-    st.markdown(
-        f'<div class="pp-card" style="margin-top:12px"><div class="pp-kicker">Vấn đề cần xử lý</div><ul class="pp-list">{items}{budget_note}</ul></div>',
-        unsafe_allow_html=True,
-    )
+            items.append("Chi phí khuyến mãi của một kịch bản đã mô phỏng vượt ngân sách hồ sơ.")
+    show(card(kicker("Vấn đề cần xử lý") + bullets(items), style="margin-top:12px"))

@@ -5,7 +5,7 @@ import streamlit as st
 
 from src.forecasting.models import get_candidate_models
 from src.promotion.mechanics import MECHANIC_LABELS_VI
-from ui.components import badge
+from ui.components import badge, footnote, grid, model_card, show
 from ui.shell import render_shell
 
 
@@ -68,24 +68,19 @@ def render() -> None:
             "Không có trợ lý hội thoại. Đề xuất chỉ tổng hợp từ mô hình đã triển khai.",
         ),
     ]
-    blocks = []
-    for title, subtitle, method, catalog, inputs, status, explain in cards:
-        blocks.append(
-            f"""
-<div class="pp-card">
-  <div class="pp-kicker">{title}</div>
-  <div class="pp-opp-title">{subtitle}</div>
-  <p class="pp-muted"><b>Phương pháp.</b> {method}</p>
-  <p class="pp-muted"><b>Thành phần.</b> {catalog}</p>
-  <p class="pp-muted"><b>Đầu vào.</b> {inputs}</p>
-  <p class="pp-muted"><b>Trạng thái phiên.</b> {status}</p>
-  <p class="pp-muted"><b>Diễn giải.</b> {explain}</p>
-  <div style="margin-top:8px">{badge("Đang dùng trong source", "info")}</div>
-</div>
-"""
+    show(grid([
+        model_card(
+            title,
+            subtitle,
+            [
+                ("Phương pháp", method),
+                ("Thành phần", catalog),
+                ("Đầu vào", inputs),
+                ("Trạng thái phiên", status),
+                ("Diễn giải", explain),
+            ],
+            badge("Đang dùng trong source", "info"),
         )
-    st.markdown(f'<div class="pp-grid-2">{"".join(blocks)}</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<p class="pp-foot">Prophet, SHAP và Monte Carlo không nằm trong mã nguồn hiện tại nên không được ghi trên trang này.</p>',
-        unsafe_allow_html=True,
-    )
+        for title, subtitle, method, catalog, inputs, status, explain in cards
+    ], columns=2))
+    show(footnote("Prophet, SHAP và Monte Carlo không nằm trong mã nguồn hiện tại nên không được ghi trên trang này."))

@@ -4,7 +4,31 @@ primaryColor = "#2563EB"
 backgroundColor = "#F8FAFC"
 secondaryBackgroundColor = "#FFFFFF"
 textColor = "#0F172A"
-font = "sans serif"
+borderColor = "#E2E8F0"
+linkColor = "#2563EB"
+baseRadius = "12px"
+buttonRadius = "12px"
+showWidgetBorder = true
+showSidebarBorder = true
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFont = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@600;700&display=swap"
+baseFontSize = 15
+headingFontSizes = ["30px", "22px", "18px", "16px", "14px", "13px"]
+headingFontWeights = [700, 650, 600, 600, 600, 600]
+dataframeBorderColor = "#E2E8F0"
+dataframeHeaderBackgroundColor = "#F8FAFC"
+chartCategoricalColors = ["#2563EB", "#7C3AED", "#F97316", "#10B981", "#EC4899", "#0EA5E9"]
+blueColor = "#2563EB"
+violetColor = "#7C3AED"
+greenColor = "#059669"
+redColor = "#DC2626"
+orangeColor = "#D97706"
+grayColor = "#64748B"
+
+[theme.sidebar]
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F8FAFC"
+borderColor = "#E2E8F0"
 
 [client]
 toolbarMode = "minimal"
