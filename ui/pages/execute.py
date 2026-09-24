@@ -18,8 +18,8 @@ from ui.shell import render_shell
 
 def render() -> None:
     render_shell("Execute", "Tạo kế hoạch thực thi và checklist công việc.", stage=6)
-    card = st.session_state.get("last_recommendation_card")
-    if card is None:
+    rec = st.session_state.get("last_recommendation_card")
+    if rec is None:
         left, right = st.columns([0.9, 1.3], gap="medium")
         with left:
             show(card(kicker("Thông tin chiến dịch") + defs([
@@ -45,26 +45,26 @@ def render() -> None:
         show(card(
             kicker("Thông tin chiến dịch")
             + defs([
-                ("Tên", card.promotion_label),
-                ("Thời gian gợi ý", card.timing_text),
-                ("Phạm vi", card.product_focus),
+                ("Tên", rec.promotion_label),
+                ("Thời gian gợi ý", rec.timing_text),
+                ("Phạm vi", rec.product_focus),
                 ("Ngân sách hồ sơ", vnd(profile.promotion_budget)),
-                ("Cơ chế", card.promotion_label),
+                ("Cơ chế", rec.promotion_label),
             ])
-            + muted(f"Mục tiêu: {card.objective_vi}. Tồn kho đề xuất {integer(card.recommended_stock)}.")
+            + muted(f"Mục tiêu: {rec.objective_vi}. Tồn kho đề xuất {integer(rec.recommended_stock)}.")
         ))
     with right:
         if st.button("Tạo kế hoạch từ phương án đã chọn", type="primary", key="build_plan"):
             tasks = generate_execution_plan(
                 campaign_start=pd.Timestamp(start),
-                product_focus=card.product_focus,
-                promotion_label=card.promotion_label,
-                recommended_stock=card.recommended_stock,
-                objective_vi=card.objective_vi,
+                product_focus=rec.product_focus,
+                promotion_label=rec.promotion_label,
+                recommended_stock=rec.recommended_stock,
+                objective_vi=rec.objective_vi,
             )
             st.session_state["last_execution_plan"] = tasks_to_dataframe(tasks)
             st.session_state["last_campaign_plan"] = generate_campaign_plan(
-                card,
+                rec,
                 business_name=profile.business_name,
                 service_capacity_per_staff_per_hour=profile.service_capacity_per_staff_per_hour,
             )
@@ -75,7 +75,7 @@ def render() -> None:
             edited = st.data_editor(plan_df, width="stretch", hide_index=True, num_rows="fixed", key="exec_editor")
             st.session_state["execution_editor_df"] = edited
             _readiness(edited)
-    _actions(card, profile, start, meta)
+    _actions(rec, profile, start, meta)
 
 
 def _readiness(edited: pd.DataFrame) -> None:
@@ -95,7 +95,7 @@ def _readiness(edited: pd.DataFrame) -> None:
     ))
 
 
-def _actions(card, profile, start, meta) -> None:
+def _actions(rec, profile, start, meta) -> None:
     plan = st.session_state.get("last_campaign_plan")
     c1, c2 = st.columns(2)
     with c1:
@@ -122,7 +122,7 @@ def _actions(card, profile, start, meta) -> None:
             if st.session_state.get("last_execution_plan") is None:
                 st.error("Hãy tạo kế hoạch trước khi khởi chạy.")
             else:
-                _persist_campaign(card, start, meta)
+                _persist_campaign(rec, start, meta)
     if plan is not None:
         note = "Nội dung marketing dùng template rule-based."
         if is_llm_enabled():
@@ -134,7 +134,7 @@ def _actions(card, profile, start, meta) -> None:
             st.text_area("SMS", plan.sms_copy, height=70)
 
 
-def _persist_campaign(card, start, meta) -> None:
+def _persist_campaign(rec, start, meta) -> None:
     promo_days = meta.get("promo_days")
     scenario_table = st.session_state.get("last_scenario_table")
     no_promo_gp_per_day = None
@@ -144,20 +144,20 @@ def _persist_campaign(card, start, meta) -> None:
             no_promo_gp_per_day = float(no_promo_rows.iloc[0]["loi_nhuan_gop"]) / promo_days
     record = CampaignRecord(
         campaign_id=new_campaign_id(),
-        objective=card.objective_vi,
-        product_focus=card.product_focus,
-        promotion_label=card.promotion_label,
+        objective=rec.objective_vi,
+        product_focus=rec.product_focus,
+        promotion_label=rec.promotion_label,
         forecast={
-            "expected_revenue_range": list(card.expected_revenue_range),
-            "expected_gp_range": list(card.expected_gp_range),
-            "expected_customers_range": list(card.expected_customers_range),
-            "expected_demand_range": list(card.expected_demand_range),
-            "expected_roi_range": list(card.expected_roi_range) if card.expected_roi_range else None,
+            "expected_revenue_range": list(rec.expected_revenue_range),
+            "expected_gp_range": list(rec.expected_gp_range),
+            "expected_customers_range": list(rec.expected_customers_range),
+            "expected_demand_range": list(rec.expected_demand_range),
+            "expected_roi_range": list(rec.expected_roi_range) if rec.expected_roi_range else None,
             "campaign_start": str(start),
             "promo_days": promo_days,
             "no_promo_gp_per_day": no_promo_gp_per_day,
         },
-        roi_forecast=sum(card.expected_roi_range) / 2 if card.expected_roi_range else None,
+        roi_forecast=sum(rec.expected_roi_range) / 2 if rec.expected_roi_range else None,
     )
     save_campaign_record(record)
     st.session_state["active_campaign_id"] = record.campaign_id
