@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from services.scientific_model_engine import ScientificModelEngine
-from src.basket.market_basket import run_market_basket_analysis
+from services.workflow import run_basket_analysis
 from src.context.local_context import BUSINESS_EVENTS, CUSTOMER_CONTEXTS, STORE_CONTEXTS, LocalContext
 from src.explainability.explainer import explain_trend
 from src.external_signals import competitor, events, google_trends, social_listener, weather
@@ -192,8 +192,12 @@ def _basket() -> None:
         return
     if st.button("Phân tích giỏ hàng", type="primary", key="run_basket") or st.session_state.get("basket_result"):
         if st.session_state.get("basket_result") is None:
-            with st.spinner("Đang tìm luật kết hợp sản phẩm..."):
-                st.session_state["basket_result"] = run_market_basket_analysis(df)
+            with st.spinner("Đang tìm luật kết hợp sản phẩm (có thể xếp hàng nếu nhiều người đang tính)..."):
+                try:
+                    st.session_state["basket_result"] = run_basket_analysis(df)
+                except RuntimeError as exc:
+                    st.warning(str(exc))
+                    return
         result = st.session_state["basket_result"]
         st.info(result.message)
         if result.sufficient_data:

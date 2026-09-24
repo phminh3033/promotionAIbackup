@@ -103,10 +103,10 @@ def _panel(scope, scope_value, horizon, label, metric, y_title) -> None:
     cache_key = f"{scope}|{scope_value}|{metric}|{horizon}"
     if st.button(f"Chạy {label.lower()}", type="primary", key=f"run_{metric}_{scope}_{horizon}"):
         try:
-            with st.spinner("Đang backtest và chọn mô hình..."):
+            with st.spinner("Đang backtest và chọn mô hình (có thể xếp hàng nếu nhiều người đang tính)..."):
                 run_forecast(scope, scope_value, metric, label, horizon)
-        except ValueError as exc:
-            st.error(str(exc))
+        except (ValueError, RuntimeError) as exc:
+            st.warning(str(exc)) if isinstance(exc, RuntimeError) else st.error(str(exc))
             return
     result = st.session_state.get("forecast_cache", {}).get(cache_key)
     history = st.session_state.get("forecast_history", {}).get(cache_key)

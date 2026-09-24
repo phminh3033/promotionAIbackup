@@ -22,6 +22,7 @@ from src.promotion.simulator import DISCLAIMER_VI
 from src.recommendation.engine import CONFIDENCE_PCT_BY_LABEL, _assess_risk
 from src.recommendation.timing import analyze_best_timing
 from src.roi.calculator import compute_roi_breakdown
+from src.utils.heavy_jobs import run_heavy_job
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO_PATH = ROOT / "data" / "pharmacity_demo.csv"
@@ -45,6 +46,30 @@ DOWNSTREAM_KEYS = [
     "last_execution_plan",
     "selected_mechanic",
 ]
+
+
+@st.cache_resource(show_spinner=False)
+def _demo_bundle() -> dict:
+    """Load + clean demo một lần / process — nhiều session dùng chung DataFrame (chỉ đọc)."""
+    if not DEMO_PATH.exists():
+        raise FileNotFoundError(str(DEMO_PATH))
+    raw_df = load_raw_file(DEMO_PATH.read_bytes(), DEMO_PATH.name)
+    mapping = suggest_mapping(list(raw_df.columns))
+    errors = validate_mapping(mapping)
+    if errors:
+        raise ValueError("; ".join(errors))
+    mapped_df = apply_mapping(raw_df, mapping)
+    clean_df, report = run_quality_check(mapped_df)
+    caps = detect_capabilities(mapped_df)
+    return {
+        "raw_df": raw_df,
+        "filename": DEMO_PATH.name,
+        "mapping": mapping,
+        "mapped_df": mapped_df,
+        "clean_df": clean_df,
+        "report": report,
+        "caps": caps,
+    }
 
 
 def reset_downstream() -> None:
@@ -74,18 +99,30 @@ def commit_dataset(raw_df, filename: str, mapping: dict) -> tuple[bool, str]:
 
 
 def load_demo_dataset() -> tuple[bool, str]:
-    if not DEMO_PATH.exists():
+    try:
+        bundle = _demo_bundle()
+    except FileNotFoundError:
         return False, "Không tìm thấy file dữ liệu demo. Chạy python scripts/generate_pharmacity_demo.py trước."
-    raw_df = load_raw_file(DEMO_PATH.read_bytes(), DEMO_PATH.name)
-    mapping = suggest_mapping(list(raw_df.columns))
-    ok, message = commit_dataset(raw_df, DEMO_PATH.name, mapping)
-    if ok:
-        st.session_state["business_profile"] = BusinessProfile.with_yaml_defaults(
-            business_name="Nhà thuốc Demo (Pharmacity-style)",
-            industry="Dược phẩm / Nhà thuốc",
-        )
-    return ok, message
+    except Exception as exc:  # noqa: BLE001 — thông báo rõ cho buổi demo
+        return False, f"Không tải được dữ liệu demo: {exc}"
 
+    # Reference dùng chung (không copy) để tiết kiệm RAM khi nhiều người dùng thử.
+    st.session_state["raw_df"] = bundle["raw_df"]
+    st.session_state["raw_filename"] = bundle["filename"]
+    st.session_state["column_mapping"] = bundle["mapping"]
+    st.session_state["mapped_df"] = bundle["mapped_df"]
+    st.session_state["capabilities"] = bundle["caps"]
+    st.session_state["clean_df"] = bundle["clean_df"]
+    st.session_state["quality_report"] = bundle["report"]
+    st.session_state["data_loaded_at"] = datetime.now()
+    reset_downstream()
+    st.session_state["business_profile"] = BusinessProfile.with_yaml_defaults(
+        business_name="Nhà thuốc Demo (Pharmacity-style)",
+        industry="Dược phẩm / Nhà thuốc",
+    )
+    n = len(bundle["clean_df"])
+    score = bundle["report"].score
+    return True, f"Đã xử lý {n:,} dòng hợp lệ. Điểm chất lượng {score}/100."
 
 def dataset_chip() -> str:
     filename = str(st.session_state.get("raw_filename") or "")
@@ -258,12 +295,27 @@ def run_forecast(scope: str, scope_value, metric_col: str, metric_label: str, ho
     if metric_col not in daily.columns:
         raise ValueError("Dữ liệu không có chỉ số này.")
     y = daily.set_index("day")[metric_col].astype(float)
-    result = ENGINE.forecast(y, horizon=horizon, series_name=metric_label)
+
+    def _job():
+        return ENGINE.forecast(y, horizon=horizon, series_name=metric_label)
+
+    result, err = run_heavy_job(_job)
+    if err:
+        raise RuntimeError(err)
     cache_key = f"{scope}|{scope_value}|{metric_col}|{horizon}"
     st.session_state["forecast_cache"][cache_key] = result
     st.session_state["forecast_history"][cache_key] = y.tail(90)
     return cache_key, result, y.tail(90)
 
+
+def run_basket_analysis(df: pd.DataFrame):
+    """Chạy market basket có giới hạn concurrency (dùng từ UI Understand)."""
+    from src.basket.market_basket import run_market_basket_analysis
+
+    result, err = run_heavy_job(lambda: run_market_basket_analysis(df))
+    if err:
+        raise RuntimeError(err)
+    return result
 
 def recent_demand(df: pd.DataFrame, days: int = 30) -> pd.DataFrame:
     cutoff = df["date"].max() - pd.Timedelta(days=days)

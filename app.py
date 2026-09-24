@@ -9,11 +9,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import streamlit as st
 from dotenv import load_dotenv
 
+from src.utils.demo_access import require_demo_access
 from ui import nav
 from ui.pages import command_center, data_workspace, decide, execute, forecast, model_info, monitor, prepare, reports, simulate, understand
 
 load_dotenv()
 st.set_page_config(page_title="PromotionPilot AI", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
+require_demo_access()
 
 pages = {
     "command": st.Page(command_center.render, title="Command Center", url_path="command-center", default=True),

@@ -1,6 +1,7 @@
 """Data Workspace: demo, upload, mapping và điểm chất lượng thật."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import streamlit as st
@@ -20,6 +21,8 @@ CHECKS = [
     ("Dữ liệu khuyến mãi", lambda report, caps: (bool(caps.has_promotion), "Có lịch sử khuyến mãi" if caps.has_promotion else "Thiếu lịch sử khuyến mãi")),
 ]
 
+_MAX_UPLOAD_MB = max(1, int(os.getenv("DEMO_MAX_UPLOAD_MB", "5")))
+
 
 def render() -> None:
     render_shell(
@@ -38,7 +41,8 @@ def _sources() -> None:
     c1, c2, c3 = st.columns(3)
     with c1:
         st.markdown(
-            '<div class="pp-card"><div class="pp-kicker">Sử dụng dữ liệu mẫu</div><p class="pp-muted">Bộ dữ liệu nhà thuốc demo đã được chuẩn bị sẵn.</p></div>',
+            '<div class="pp-card"><div class="pp-kicker">Sử dụng dữ liệu mẫu</div>'
+            '<p class="pp-muted">Bộ dữ liệu nhà thuốc demo đã chuẩn bị sẵn (khuyến nghị khi nhiều người dùng thử).</p></div>',
             unsafe_allow_html=True,
         )
         if st.button("Dùng dữ liệu mẫu", type="primary", key="use_demo", use_container_width=True):
@@ -49,7 +53,8 @@ def _sources() -> None:
                 st.rerun()
     with c2:
         st.markdown(
-            '<div class="pp-card"><div class="pp-kicker">Tải file dữ liệu</div><p class="pp-muted">CSV hoặc Excel xuất từ POS. Bạn sẽ xác nhận ánh xạ cột trước khi phân tích.</p></div>',
+            f'<div class="pp-card"><div class="pp-kicker">Tải file dữ liệu</div>'
+            f'<p class="pp-muted">CSV/Excel từ POS. Tối đa {_MAX_UPLOAD_MB} MB khi buổi demo đông người.</p></div>',
             unsafe_allow_html=True,
         )
         uploaded = st.file_uploader("Chọn file", type=["csv", "xlsx", "xls"], label_visibility="collapsed")
@@ -57,7 +62,8 @@ def _sources() -> None:
             _read_upload(uploaded)
     with c3:
         st.markdown(
-            '<div class="pp-card"><div class="pp-kicker">Tải file mẫu</div><p class="pp-muted">File Excel mẫu đúng cấu trúc để điền dữ liệu doanh nghiệp.</p></div>',
+            '<div class="pp-card"><div class="pp-kicker">Tải file mẫu</div>'
+            '<p class="pp-muted">File Excel mẫu đúng cấu trúc để điền dữ liệu doanh nghiệp.</p></div>',
             unsafe_allow_html=True,
         )
         if TEMPLATE_PATH.exists():
@@ -73,12 +79,22 @@ def _sources() -> None:
 
 
 def _read_upload(uploaded) -> None:
+    max_bytes = _MAX_UPLOAD_MB * 1024 * 1024
+    if uploaded.size > max_bytes:
+        st.error(
+            f"File quá lớn ({uploaded.size / (1024 * 1024):.1f} MB). "
+            f"Buổi demo giới hạn {_MAX_UPLOAD_MB} MB — hãy dùng nút «Dùng dữ liệu mẫu»."
+        )
+        return
     file_bytes = uploaded.getvalue()
     sheet_name = None
     if Path(uploaded.name).suffix.lower() in {".xlsx", ".xls"}:
         sheets = list_excel_sheets(file_bytes)
         if len(sheets) > 1:
-            default_idx = next((i for i, name in enumerate(sheets) if name.strip().lower() in {"sales_data", "sales data", "data"}), 0)
+            default_idx = next(
+                (i for i, name in enumerate(sheets) if name.strip().lower() in {"sales_data", "sales data", "data"}),
+                0,
+            )
             sheet_name = st.selectbox("Sheet dữ liệu bán hàng", sheets, index=default_idx)
     try:
         raw_df = load_raw_file(file_bytes, uploaded.name, sheet_name=sheet_name)
@@ -97,7 +113,11 @@ def _mapping() -> None:
     raw_df = st.session_state.get("pending_raw_df")
     if raw_df is None:
         return
-    st.markdown('<div class="pp-section"><div><h2>Ánh xạ cột</h2><p>Trường có (*) là bắt buộc. Gợi ý tự động có thể sửa trước khi áp dụng.</p></div></div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="pp-section"><div><h2>Ánh xạ cột</h2>'
+        "<p>Trường có (*) là bắt buộc. Gợi ý tự động có thể sửa trước khi áp dụng.</p></div></div>",
+        unsafe_allow_html=True,
+    )
     options = ["-- Không có --"] + list(raw_df.columns)
     suggested = st.session_state.get("pending_mapping") or {}
     new_mapping = {}
@@ -162,7 +182,6 @@ def _quality() -> None:
         rows.append(
             f"<tr><td>{label}</td><td>{badge('OK' if ok else 'Thiếu dữ liệu', 'ok' if ok else 'warn')}</td><td>{detail}</td></tr>"
         )
-    note = ""
     if missing_inventory:
         note = '<div class="pp-banner">Bổ sung dữ liệu tồn kho để cải thiện chất lượng mô phỏng và đề xuất nhập hàng.</div>'
     elif report.warnings:
