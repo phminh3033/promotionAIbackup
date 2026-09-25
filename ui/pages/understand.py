@@ -496,7 +496,8 @@ def _segment_summary_table(seg: SegmentationResult) -> pd.DataFrame:
     ].copy()
     display["Recency TB (ngày)"] = display["Recency TB (ngày)"].round(0)
     display["Frequency TB (lần)"] = display["Frequency TB (lần)"].round(1)
-    display["Monetary TB (VNĐ)"] = display["Monetary TB (VNĐ)"].round(0)
+    display["Số khách hàng"] = display["Số khách hàng"].map(integer)
+    display["Monetary TB (VNĐ)"] = display["Monetary TB (VNĐ)"].map(integer)
     return display
 
 
@@ -525,8 +526,19 @@ def _rfm_detail_table(seg: SegmentationResult) -> pd.DataFrame:
     if "Frequency (lần)" in display.columns:
         display["Frequency (lần)"] = display["Frequency (lần)"].round(1)
     if "Monetary (VNĐ)" in display.columns:
-        display["Monetary (VNĐ)"] = display["Monetary (VNĐ)"].round(0)
+        display["Monetary (VNĐ)"] = display["Monetary (VNĐ)"].map(integer)
     return display
+
+
+def _chart_hoverlabel() -> dict:
+    """Tooltip trắng, chữ rõ, theo con trỏ — chỉ hiện giá trị (qua hovertemplate)."""
+    return dict(
+        bgcolor="white",
+        bordercolor="#E2E8F0",
+        font=dict(size=13, color=INK, family=FONT),
+        align="left",
+        namelength=-1,
+    )
 
 
 def _apply_segment_chart_frame(fig, *, height: int, bottom: int = 56, left: int = 56, right: int = 24, top: int = 20) -> None:
@@ -552,6 +564,7 @@ def _apply_segment_chart_frame(fig, *, height: int, bottom: int = 56, left: int 
     )
     fig.update_xaxes(automargin=True, title_standoff=10, tickfont=dict(size=11))
     fig.update_yaxes(automargin=True, title_standoff=10, tickfont=dict(size=11))
+    fig.update_layout(hovermode="closest", hoverlabel=_chart_hoverlabel())
 
 
 def _sample_customer_map_points(labeled: pd.DataFrame, cap: int = CUSTOMER_MAP_POINT_CAP) -> tuple[pd.DataFrame, bool]:
@@ -687,16 +700,20 @@ def _render_customer_segments(seg: SegmentationResult) -> None:
     col1, col2 = st.columns(2, gap="medium")
     with col1, st.container(border=True):
         show(kicker("Tỷ trọng số lượng khách hàng theo nhóm"))
+        pie_df = summary.copy()
+        pie_df["n_label"] = pie_df["n_customers"].map(integer)
         fig_pie = px.pie(
-            summary,
+            pie_df,
             names="segment",
             values="n_customers",
+            custom_data=["n_label"],
         )
         fig_pie.update_traces(
             textposition="inside",
             textinfo="percent",
             hole=0.38,
             textfont=dict(size=12),
+            hovertemplate="%{label}<br>%{customdata[0]}<br>%{percent}<extra></extra>",
         )
         _apply_segment_chart_frame(fig_pie, height=360, bottom=72, left=16, right=16, top=36)
         fig_pie.update_layout(
@@ -716,14 +733,20 @@ def _render_customer_segments(seg: SegmentationResult) -> None:
 
     with col2, st.container(border=True):
         show(kicker("Doanh thu trung bình/khách theo nhóm"))
-        bar_df = summary.sort_values("monetary_mean", ascending=False)
+        bar_df = summary.sort_values("monetary_mean", ascending=False).copy()
+        bar_df["monetary_label"] = bar_df["monetary_mean"].map(integer)
         fig_bar = px.bar(
             bar_df,
             x="segment",
             y="monetary_mean",
+            custom_data=["monetary_label"],
             labels={"segment": "", "monetary_mean": "Doanh thu TB (VNĐ)"},
         )
-        fig_bar.update_traces(marker_line_width=0, width=0.55)
+        fig_bar.update_traces(
+            marker_line_width=0,
+            width=0.55,
+            hovertemplate="%{x}<br>%{customdata[0]}<extra></extra>",
+        )
         _apply_segment_chart_frame(fig_bar, height=360, bottom=96, left=72, right=16, top=16)
         fig_bar.update_xaxes(tickangle=-28, tickfont=dict(size=10), title="")
         fig_bar.update_yaxes(tickformat="~s", title=dict(text="Doanh thu TB (VNĐ)", font=dict(size=11)))
@@ -829,16 +852,6 @@ def _basket_rules_placeholders() -> None:
         show(muted(EMPTY))
 
 
-def _chart_hoverlabel() -> dict:
-    return dict(
-        bgcolor="white",
-        bordercolor="#E2E8F0",
-        font=dict(size=13, color=INK, family=FONT),
-        align="left",
-        namelength=-1,
-    )
-
-
 def _to_ty_vnd(series: pd.Series) -> pd.Series:
     """VNĐ → Tỷ VNĐ, làm tròn 2 chữ số thập phân (chỉ dùng để hiển thị chart)."""
     return (series.astype(float) / 1_000_000_000).round(2)
@@ -862,13 +875,10 @@ def _render_product_ranking(product_stats: pd.DataFrame, caps, df: pd.DataFrame)
             st.dataframe(display.head(30), width="stretch", hide_index=True)
             st.caption(f"{len(product_stats):,} SKU · sắp xếp theo doanh thu giảm dần.")
 
-    max_n = int(min(30, max(5, len(product_stats)))) if not product_stats.empty else 5
-    default_n = int(min(15, max_n))
-    top_n = st.slider("Số sản phẩm hiển thị trên biểu đồ", 5, max_n, default_n, key="basket_top_n")
-
+    top_n = 10
     col1, col2 = st.columns(2, gap="medium")
     with col1, st.container(border=True):
-        show(kicker(f"Top {top_n} sản phẩm theo doanh thu"))
+        show(kicker("Top 10 sản phẩm theo doanh thu"))
         if product_stats.empty:
             show(chart_placeholder(EMPTY))
         else:
@@ -891,7 +901,7 @@ def _render_product_ranking(product_stats: pd.DataFrame, caps, df: pd.DataFrame)
                 hovertemplate="%{y}<br>%{x:.2f} Tỷ VNĐ<extra></extra>",
             )
             _apply_segment_chart_frame(fig, height=380, bottom=48, left=96, right=16, top=16)
-            fig.update_layout(showlegend=False, hoverlabel=_chart_hoverlabel())
+            fig.update_layout(showlegend=False, hovermode="closest", hoverlabel=_chart_hoverlabel())
             show_chart(fig)
 
     with col2, st.container(border=True):
