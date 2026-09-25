@@ -1,62 +1,163 @@
-"""Forecast: cùng pipeline select_and_forecast, chỉ đổi lớp hiển thị."""
+"""Forecast: cùng pipeline select_and_forecast, chỉ đổi lớp hiển thị theo template."""
 from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
 
 from services.workflow import run_forecast
+from src.features.engineering import analyze_series_characteristics
+from src.recommendation.engine import CONFIDENCE_PCT_BY_LABEL
 from ui.charts import show_chart, time_series
-from ui.components import DASH, EMPTY, badge, card, chart_card, esc, kicker, metric_mini, muted, show
+from ui.components import (
+    DASH,
+    EMPTY,
+    chart_placeholder,
+    chart_workspace_header,
+    contribution_factor_card,
+    contribution_factor_grid,
+    factors_panel,
+    forecast_metric_card,
+    forecast_summary_panel,
+    model_insight_card,
+    show,
+)
 from ui.formatters import integer, pct, signed_pct
 from ui.shell import continue_button, render_shell
 
-METRICS = [
-    ("Dự báo nhu cầu", "Sản lượng bán", "quantity"),
-    ("Dự báo doanh thu", "Doanh thu", "revenue"),
-    ("Dự báo traffic", "Số giao dịch", "n_transactions"),
+# tab_label, chart_title, chart_subtitle, metric_col, y_title, unit, expected_title, growth_title, icon
+TAB_SPECS = [
+    {
+        "tab": "Dự báo nhu cầu",
+        "chart_title": "Dự báo nhu cầu sản phẩm",
+        "chart_subtitle": "Nhu cầu thực tế trong quá khứ và dự báo từ mô hình.",
+        "metric": "quantity",
+        "label": "Sản lượng bán",
+        "y_title": "Đơn vị",
+        "unit": "đơn vị",
+        "expected_title": "Sản lượng dự kiến",
+        "growth_title": "Tăng trưởng sản lượng dự kiến",
+        "actual_name": "Nhu cầu thực tế",
+        "icon": "cart",
+        "expected_icon": "package",
+        "growth_icon": "trend",
+    },
+    {
+        "tab": "Dự báo doanh thu",
+        "chart_title": "Dự báo doanh thu",
+        "chart_subtitle": "Doanh thu thực tế trong quá khứ và dự báo từ mô hình.",
+        "metric": "revenue",
+        "label": "Doanh thu",
+        "y_title": "Doanh thu",
+        "unit": "đ",
+        "expected_title": "Doanh thu dự kiến",
+        "growth_title": "Tăng trưởng doanh thu dự kiến",
+        "actual_name": "Doanh thu thực tế",
+        "icon": "chart-column",
+        "expected_icon": "dollar",
+        "growth_icon": "trend",
+    },
+    {
+        "tab": "Dự báo traffic",
+        "chart_title": "Dự báo traffic",
+        "chart_subtitle": "Lưu lượng giao dịch/khách hàng trong quá khứ và dự báo từ mô hình.",
+        "metric": "n_transactions",
+        "label": "Số giao dịch",
+        "y_title": "Giao dịch",
+        "unit": "giao dịch",
+        "expected_title": "Traffic dự kiến",
+        "growth_title": "Tăng trưởng traffic dự kiến",
+        "actual_name": "Traffic thực tế",
+        "icon": "users",
+        "expected_icon": "users",
+        "growth_icon": "trend",
+        "fallback_metric": "n_customers",
+        "fallback_label": "Số khách hàng",
+        "fallback_unit": "khách hàng",
+        "fallback_y": "Khách hàng",
+    },
 ]
+
+GRANULARITY = {"Ngày": "D", "Tuần": "W", "Tháng": "ME"}
 
 
 def render() -> None:
-    render_shell("Forecast", "Dự báo nhu cầu, doanh thu và traffic từ dữ liệu lịch sử.", stage=2)
+    render_shell(
+        "Forecast",
+        "Dự báo nhu cầu, doanh thu và traffic từ dữ liệu lịch sử.",
+        stage=2,
+    )
     from src.utils.state import has_data
 
     if not has_data():
         _empty_forecast()
+        _page_actions(detail_key="fc_detail_empty", next_key="fc_next_empty")
         return
+
     df = st.session_state["clean_df"]
     caps = st.session_state["capabilities"]
     scope, scope_value, horizon = _controls(df, caps)
-    tab_demand, tab_revenue, tab_traffic = st.tabs([item[0] for item in METRICS])
-    with tab_demand:
-        _panel(scope, scope_value, horizon, "Sản lượng bán", "quantity", "Đơn vị")
-    with tab_revenue:
-        _panel(scope, scope_value, horizon, "Doanh thu", "revenue", "Doanh thu")
-    with tab_traffic:
-        if caps.has_transaction:
-            _panel(scope, scope_value, horizon, "Số giao dịch", "n_transactions", "Giao dịch")
-        elif caps.has_customer:
-            _panel(scope, scope_value, horizon, "Số khách hàng", "n_customers", "Khách hàng")
-        else:
-            st.info("Cần mã giao dịch hoặc mã khách hàng để dự báo traffic. Hệ thống không ước lượng traffic khi thiếu cột này.")
-    left, right = st.columns([1, 1])
-    with right:
-        continue_button("Tiếp tục đến bước 3: Prepare", "prepare", key="fc_next")
+
+    tabs = st.tabs([spec["tab"] for spec in TAB_SPECS])
+    for tab, spec in zip(tabs, TAB_SPECS):
+        with tab:
+            _panel(scope, scope_value, horizon, caps, spec)
+
+    _page_actions(detail_key="fc_detail", next_key="fc_next")
 
 
 def _empty_forecast() -> None:
-    tab_demand, tab_revenue, tab_traffic = st.tabs([item[0] for item in METRICS])
-    for tab, title in ((tab_demand, "Dự báo nhu cầu"), (tab_revenue, "Dự báo doanh thu"), (tab_traffic, "Dự báo traffic")):
+    tabs = st.tabs([spec["tab"] for spec in TAB_SPECS])
+    for tab, spec in zip(tabs, TAB_SPECS):
         with tab:
-            chart, summary = st.columns([1.7, 0.9])
-            with chart:
-                show(chart_card(title))
-            with summary:
-                show(_forecast_summary(DASH, DASH, DASH, "", EMPTY))
-    show(card(kicker("Insight từ mô hình") + muted(EMPTY), style="margin-top:12px"))
-    _col, right = st.columns([1, 1])
-    with right:
-        continue_button("Tiếp tục đến bước 3: Prepare", "prepare", key="fc_next_empty")
+            main, side = st.columns([3, 1], gap="medium")
+            with main, st.container(border=True):
+                show(chart_workspace_header(spec["chart_title"], spec["chart_subtitle"], spec["icon"]))
+                show(chart_placeholder("Chưa có dữ liệu. Tải dữ liệu ở Understand để chạy dự báo."))
+            with side, st.container(border=True):
+                show(
+                    forecast_summary_panel(
+                        "Kết quả dự báo",
+                        "Tổng hợp kết quả từ mô hình",
+                        _empty_metric_cards(spec),
+                    )
+                )
+            insight, factors = st.columns([2, 3], gap="medium")
+            with insight:
+                show(
+                    model_insight_card(
+                        "Insight từ mô hình",
+                        "Các yếu tố chính tác động đến dự báo",
+                        [],
+                    )
+                )
+            with factors:
+                show(
+                    factors_panel(
+                        "Các yếu tố tác động chính",
+                        "Đóng góp của từng yếu tố trong mô hình dự báo",
+                        contribution_factor_grid(_empty_factor_cards()),
+                    )
+                )
+
+
+def _empty_metric_cards(spec: dict) -> str:
+    return "".join(
+        [
+            forecast_metric_card(spec["expected_title"], DASH, spec["expected_icon"], unit=spec["unit"], accent="purple", note=EMPTY),
+            forecast_metric_card(spec["growth_title"], DASH, spec["growth_icon"], accent="purple", note=EMPTY),
+            forecast_metric_card("Khoảng dự báo (~80%)", DASH, "chart", unit=spec["unit"], accent="green", note=EMPTY),
+            forecast_metric_card("Độ tin cậy của mô hình", DASH, "shield-check", accent="green", note=EMPTY),
+        ]
+    )
+
+
+def _empty_factor_cards() -> list[str]:
+    return [
+        contribution_factor_card("Nhu cầu theo mùa", DASH, EMPTY, "calendar", "neutral"),
+        contribution_factor_card("Đà gần đây", DASH, EMPTY, "map-pin", "neutral"),
+        contribution_factor_card("Biến động chuỗi", DASH, EMPTY, "users-round", "neutral"),
+        contribution_factor_card("Xu hướng doanh số", DASH, EMPTY, "trend", "neutral"),
+    ]
 
 
 def _controls(df, caps):
@@ -80,68 +181,321 @@ def _controls(df, caps):
     return scope, scope_value, int(horizon)
 
 
-def _panel(scope, scope_value, horizon, label, metric, y_title) -> None:
+def _resolve_metric(spec: dict, caps) -> tuple[str, str, str, str] | None:
+    metric = spec["metric"]
+    label = spec["label"]
+    unit = spec["unit"]
+    y_title = spec["y_title"]
+    if metric == "n_transactions":
+        if caps.has_transaction:
+            return metric, label, unit, y_title
+        if caps.has_customer:
+            return (
+                spec["fallback_metric"],
+                spec["fallback_label"],
+                spec["fallback_unit"],
+                spec["fallback_y"],
+            )
+        return None
+    return metric, label, unit, y_title
+
+
+def _panel(scope, scope_value, horizon, caps, spec: dict) -> None:
+    resolved = _resolve_metric(spec, caps)
+    if resolved is None:
+        st.info(
+            "Cần mã giao dịch hoặc mã khách hàng để dự báo traffic. "
+            "Hệ thống không ước lượng traffic khi thiếu cột này."
+        )
+        return
+    metric, label, unit, y_title = resolved
     if scope != "Toàn công ty" and scope_value is None:
         return
+
     cache_key = f"{scope}|{scope_value}|{metric}|{horizon}"
-    if st.button(f"Chạy {label.lower()}", type="primary", key=f"run_{metric}_{scope}_{horizon}"):
-        try:
-            with st.spinner("Đang backtest và chọn mô hình (có thể xếp hàng nếu nhiều người đang tính)..."):
-                run_forecast(scope, scope_value, metric, label, horizon)
-        except (ValueError, RuntimeError) as exc:
-            st.warning(str(exc)) if isinstance(exc, RuntimeError) else st.error(str(exc))
-            return
+    run_col, gran_col = st.columns([2, 1])
+    with run_col:
+        if st.button(f"Chạy {label.lower()}", type="primary", key=f"run_{metric}_{scope}_{horizon}"):
+            try:
+                with st.spinner("Đang backtest và chọn mô hình (có thể xếp hàng nếu nhiều người đang tính)..."):
+                    run_forecast(scope, scope_value, metric, label, horizon)
+            except (ValueError, RuntimeError) as exc:
+                st.warning(str(exc)) if isinstance(exc, RuntimeError) else st.error(str(exc))
+                return
+    with gran_col:
+        grain_label = st.selectbox(
+            "Độ phân giải",
+            list(GRANULARITY.keys()),
+            index=2,
+            key=f"fc_grain_{metric}",
+            label_visibility="collapsed",
+        )
+
     result = st.session_state.get("forecast_cache", {}).get(cache_key)
     history = st.session_state.get("forecast_history", {}).get(cache_key)
     if result is None or history is None:
-        st.info("Chọn phạm vi rồi bấm chạy dự báo. Kết quả được lưu trong phiên và dùng lại ở các màn sau.")
+        main, side = st.columns([3, 1], gap="medium")
+        with main, st.container(border=True):
+            show(chart_workspace_header(spec["chart_title"], spec["chart_subtitle"], spec["icon"]))
+            show(chart_placeholder("Chọn phạm vi rồi bấm chạy dự báo. Kết quả được lưu trong phiên."))
+        with side, st.container(border=True):
+            show(
+                forecast_summary_panel(
+                    "Kết quả dự báo",
+                    "Tổng hợp kết quả từ mô hình",
+                    _empty_metric_cards({**spec, "unit": unit, "expected_title": spec["expected_title"]}),
+                )
+            )
         return
-    chart, summary = st.columns([1.7, 0.9])
-    with chart:
+
+    hist_x, hist_y, fc_x, fc_y, low, high = _display_series(history, result, GRANULARITY[grain_label])
+    conf_pct = _confidence_pct(result)
+    band_label = f"Khoảng tin cậy (~80%{f', {conf_pct}%' if conf_pct else ''})" if conf_pct else "Khoảng tin cậy (~80%)"
+    # Chỉ vẽ band khi lower/upper thực sự khác nhau (model luôn trả về; naive cũng có).
+    has_band = low is not None and high is not None
+
+    main, side = st.columns([3, 1], gap="medium")
+    with main, st.container(border=True):
+        show(chart_workspace_header(spec["chart_title"], spec["chart_subtitle"], spec["icon"]))
         fig = time_series(
-            history.index,
-            history.values,
-            result.dates,
-            result.yhat,
-            result.yhat_lower,
-            result.yhat_upper,
+            hist_x,
+            hist_y,
+            fc_x,
+            fc_y,
+            low if has_band else None,
+            high if has_band else None,
             y_title=y_title,
-            title=label,
+            title="",
+            actual_name=spec["actual_name"],
+            forecast_name="Dự báo từ mô hình",
+            band_name=band_label if has_band else None,
+            height=330,
         )
         show_chart(fig)
-    with summary:
-        expected = float(pd.Series(result.yhat).sum())
-        hist_sum = float(pd.Series(history.values).sum()) or None
-        growth = (expected / (hist_sum / max(len(history), 1) * len(result.yhat)) - 1) if hist_sum else None
-        low, high = float(pd.Series(result.yhat_lower).sum()), float(pd.Series(result.yhat_upper).sum())
-        meta = f"WAPE {pct(result.wape, 1) if pd.notna(result.wape) else '—'} · {result.model_name}"
-        show(_forecast_summary(
-            integer(expected),
-            signed_pct(growth) if growth is not None else "—",
-            f"{integer(low)} – {integer(high)}",
-            badge(result.confidence, "ok" if result.confidence == "Cao" else "warn"),
-            meta,
-            band_label="Khoảng tin cậy (~80%)",
-        ))
-    show(card(kicker("Insight từ mô hình") + muted(result.explanation), style="margin-top:12px"))
-    if not result.all_model_scores.empty:
-        with st.expander("Bảng backtest các mô hình đã thử"):
-            scores = result.all_model_scores.copy()
-            if "WAPE" in scores.columns:
-                scores["WAPE"] = scores["WAPE"].map(lambda value: f"{value:.1%}" if pd.notna(value) else "—")
-            st.dataframe(scores, width="stretch", hide_index=True)
+        if not has_band:
+            st.caption("Khoảng dự báo chưa khả dụng cho mô hình hiện tại.")
+
+    with side, st.container(border=True):
+        show(_summary_from_result(spec, unit, result, history, conf_pct))
+
+    insight, factors = st.columns([2, 3], gap="medium")
+    with insight:
+        show(
+            model_insight_card(
+                "Insight từ mô hình",
+                f"Các yếu tố chính tác động đến {spec['tab'].lower()}",
+                _insight_bullets(result, history, spec),
+            )
+        )
+    with factors:
+        show(
+            factors_panel(
+                "Các yếu tố tác động chính",
+                "Đóng góp ước lượng từ đặc điểm chuỗi và kết quả dự báo",
+                contribution_factor_grid(_factor_cards(history, result, spec)),
+            )
+        )
+
     if not result.data_sufficient:
         st.warning("Chuỗi chưa đủ dài để backtest chắc chắn. Hãy xem dự báo này là tham khảo sơ bộ.")
 
 
-def _forecast_summary(total: str, growth: str, band: str, badge_html: str, note: str, band_label: str = "Khoảng tin cậy") -> str:
-    meta = f'<div class="pp-meta">{badge_html}<span class="pp-muted">{esc(note)}</span></div>' if badge_html else muted(note)
-    return card(
-        kicker("Kết quả dự báo")
-        + '<div class="pp-stack">'
-        + metric_mini("Tổng kỳ dự báo", total)
-        + metric_mini("So với nhịp lịch sử gần", growth)
-        + metric_mini(band_label, band, small=True)
-        + "</div>"
-        + meta
+def _summary_from_result(spec: dict, unit: str, result, history, conf_pct: int | None) -> str:
+    expected = float(pd.Series(result.yhat).sum())
+    hist_sum = float(pd.Series(history.values).sum()) or None
+    growth = (expected / (hist_sum / max(len(history), 1) * len(result.yhat)) - 1) if hist_sum else None
+    low = float(pd.Series(result.yhat_lower).sum())
+    high = float(pd.Series(result.yhat_upper).sum())
+    growth_txt = signed_pct(growth) if growth is not None else DASH
+    conf_value = f"{conf_pct}%" if conf_pct is not None else result.confidence
+    conf_note = f"WAPE {pct(result.wape, 1) if pd.notna(result.wape) else '—'} · {result.model_name}"
+
+    cards = "".join(
+        [
+            forecast_metric_card(
+                spec["expected_title"],
+                integer(expected),
+                spec["expected_icon"],
+                unit=unit,
+                delta=growth_txt if growth is not None else None,
+                comparison="so với kỳ trước" if growth is not None else None,
+                accent="purple",
+                note=None if growth is not None else EMPTY,
+            ),
+            forecast_metric_card(
+                spec["growth_title"],
+                f"{growth_txt} so với kỳ trước" if growth is not None else DASH,
+                spec["growth_icon"],
+                accent="purple",
+                note=None if growth is not None else EMPTY,
+            ),
+            forecast_metric_card(
+                "Khoảng dự báo (~80%)",
+                f"{integer(low)} – {integer(high)}",
+                "chart",
+                unit=unit,
+                accent="green",
+            ),
+            forecast_metric_card(
+                "Độ tin cậy của mô hình",
+                conf_value,
+                "shield-check",
+                accent="green",
+                note=conf_note,
+            ),
+        ]
     )
+    return forecast_summary_panel("Kết quả dự báo", "Tổng hợp kết quả từ mô hình", cards)
+
+
+def _confidence_pct(result) -> int | None:
+    band = CONFIDENCE_PCT_BY_LABEL.get(result.confidence)
+    if band:
+        return int(round((band[0] + band[1]) / 2))
+    if pd.notna(result.wape):
+        return int(max(0, min(99, round(100 * (1 - float(result.wape))))))
+    return None
+
+
+def _display_series(history: pd.Series, result, freq: str):
+    """Resample chỉ để hiển thị — không đổi kết quả model đã cache."""
+    hist = pd.Series(history.values, index=pd.to_datetime(history.index)).astype(float)
+    fc = pd.Series(result.yhat, index=pd.to_datetime(result.dates)).astype(float)
+    lo = pd.Series(result.yhat_lower, index=pd.to_datetime(result.dates)).astype(float)
+    hi = pd.Series(result.yhat_upper, index=pd.to_datetime(result.dates)).astype(float)
+
+    if freq == "D":
+        return hist.index, hist.values, fc.index, fc.values, lo.values, hi.values
+
+    how = "sum"
+    hist_r = hist.resample(freq).agg(how)
+    fc_r = fc.resample(freq).agg(how)
+    lo_r = lo.resample(freq).agg(how)
+    hi_r = hi.resample(freq).agg(how)
+    return hist_r.index, hist_r.values, fc_r.index, fc_r.values, lo_r.values, hi_r.values
+
+
+def _insight_bullets(result, history: pd.Series, spec: dict) -> list[str]:
+    bullets: list[str] = []
+    # Tách explanation deterministic sẵn có (bỏ markdown **).
+    raw = (result.explanation or "").replace("**", "")
+    for part in raw.replace(". ", ".\n").split("\n"):
+        text = part.strip(" .")
+        if text:
+            bullets.append(text if text.endswith(".") else f"{text}.")
+
+    chars = analyze_series_characteristics(history)
+    if chars.get("has_weekly_seasonality"):
+        strength = chars.get("weekly_seasonality_strength", 0) * 100
+        bullets.append(
+            f"Chuỗi có mùa vụ theo tuần rõ (biến thiên ~{strength:.0f}% so với trung bình)."
+        )
+    if chars.get("has_trend"):
+        direction = "tăng" if chars.get("trend_slope", 0) > 0 else "giảm"
+        bullets.append(f"Xu hướng {direction} gần đây được mô hình đưa vào dự báo {spec['tab'].lower()}.")
+    if chars.get("is_intermittent"):
+        bullets.append("Chuỗi có nhiều ngày không phát sinh — dự báo có thể biến động mạnh hơn bình thường.")
+
+    # Giới hạn 4 bullet như template.
+    return bullets[:4] or ["Chưa đủ tín hiệu để nêu insight định lượng."]
+
+
+def _factor_cards(history: pd.Series, result, spec: dict) -> list[str]:
+    """Ước lượng đóng góp từ đặc điểm chuỗi thực tế — không hard-code số mockup."""
+    chars = analyze_series_characteristics(history)
+    mean = float(chars.get("mean") or 0) or 1.0
+    season = float(chars.get("weekly_seasonality_strength") or 0)
+    season_pct = season  # đã là hệ số biến thiên tương đối
+    trend_slope = float(chars.get("trend_slope") or 0)
+    trend_pct = (trend_slope * max(len(result.yhat), 1)) / mean
+    cv = float(chars.get("cv") or 0)
+    if cv == float("inf"):
+        cv = 0.0
+
+    # Đà gần đây: 14 ngày cuối vs 14 ngày trước đó.
+    hist = pd.Series(history.values, index=pd.to_datetime(history.index)).astype(float)
+    recent_pct = 0.0
+    if len(hist) >= 28:
+        recent = float(hist.tail(14).mean())
+        prior = float(hist.iloc[-28:-14].mean()) or 1e-9
+        recent_pct = (recent / prior) - 1.0
+    elif len(hist) >= 14:
+        recent = float(hist.tail(7).mean())
+        prior = float(hist.iloc[:-7].mean()) or 1e-9
+        recent_pct = (recent / prior) - 1.0
+
+    volatility_pct = -min(cv, 1.5)  # CV cao → tác động tiêu cực tới độ ổn định
+
+    items = [
+        (
+            "Nhu cầu theo mùa",
+            season_pct,
+            "calendar",
+            "Biến thiên theo ngày trong tuần trên chuỗi lịch sử.",
+            "positive" if season_pct >= 0 else "negative",
+        ),
+        (
+            "Đà gần đây",
+            recent_pct,
+            "map-pin",
+            "So sánh nhịp gần đây với kỳ liền trước trên cùng chỉ số.",
+            "positive" if recent_pct >= 0 else "negative",
+        ),
+        (
+            "Biến động chuỗi",
+            volatility_pct,
+            "users-round",
+            "Hệ số biến thiên (CV) — biến động cao làm dự báo kém ổn định hơn.",
+            "negative" if volatility_pct < 0 else "neutral",
+        ),
+        (
+            "Xu hướng doanh số",
+            trend_pct,
+            "trend",
+            "Độ dốc xu hướng ước lượng trên lịch sử, quy về chân trời dự báo.",
+            "positive" if trend_pct >= 0 else "negative",
+        ),
+    ]
+
+    cards = []
+    for title, value, icon_name, desc, direction in items:
+        cards.append(
+            contribution_factor_card(
+                title,
+                signed_pct(value),
+                desc,
+                icon_name,
+                direction=direction,
+            )
+        )
+    return cards
+
+
+def _page_actions(*, detail_key: str, next_key: str) -> None:
+    st.markdown('<div class="pp-page-actions"></div>', unsafe_allow_html=True)
+    left, spacer, right = st.columns([1.2, 1.6, 1.4])
+    with left:
+        if st.button("Xem chi tiết phân tích →", type="secondary", key=detail_key, width="stretch"):
+            st.session_state["fc_show_detail"] = True
+    with right:
+        continue_button("Tiếp tục đến Bước 3: Prepare →", "prepare", key=next_key)
+
+    if st.session_state.get("fc_show_detail"):
+        _detail_expander()
+
+
+def _detail_expander() -> None:
+    cache = st.session_state.get("forecast_cache") or {}
+    if not cache:
+        st.info("Chưa có kết quả dự báo trong phiên để xem chi tiết.")
+        return
+    with st.expander("Chi tiết phân tích & bảng backtest", expanded=True):
+        for key, result in cache.items():
+            st.caption(f"Phiên bản: `{key}` · Mô hình: **{result.model_name}** · Độ tin cậy: **{result.confidence}**")
+            st.write(result.explanation.replace("**", ""))
+            if not result.all_model_scores.empty:
+                scores = result.all_model_scores.copy()
+                if "WAPE" in scores.columns:
+                    scores["WAPE"] = scores["WAPE"].map(lambda value: f"{value:.1%}" if pd.notna(value) else "—")
+                st.dataframe(scores, width="stretch", hide_index=True)
+            st.divider()

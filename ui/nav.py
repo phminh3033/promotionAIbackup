@@ -7,16 +7,16 @@ _PAGES: dict = {}
 
 # key, nhãn, icon Lucide, url_path — url_path phải khớp st.Page trong app.py
 NAV = [
-    ("command", "Command Center", "home", "command-center"),
-    ("understand", "Understand", "compass", "understand"),
-    ("forecast", "Forecast", "chart", "forecast"),
-    ("prepare", "Prepare", "package", "prepare"),
-    ("simulate", "Simulate", "flask", "simulate"),
-    ("decide", "Decide", "target", "decide"),
-    ("execute", "Execute", "rocket", "execute"),
-    ("monitor", "Monitor", "activity", "monitor"),
-    ("reports", "Reports", "file", "reports"),
-    ("model", "Model Info", "info", "model-info"),
+    ("command", "Tổng quan", "home", "command-center"),
+    ("understand", "Hiểu thị trường", "compass", "understand"),
+    ("forecast", "Dự báo", "chart", "forecast"),
+    ("prepare", "Chuẩn bị", "package", "prepare"),
+    ("simulate", "Mô phỏng chiến dịch", "flask", "simulate"),
+    ("decide", "Quyết định", "target", "decide"),
+    ("execute", "Triển khai", "rocket", "execute"),
+    ("monitor", "Học hỏi và tối ưu", "activity", "monitor"),
+    ("reports", "Báo cáo", "file", "reports"),
+    ("model", "Thông tin thêm", "info", "model-info"),
 ]
 
 

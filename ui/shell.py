@@ -13,19 +13,19 @@ from ui.nav import NAV, page
 from src.utils.state import init_session_state
 
 STAGES = [
-    (1, "Understand", "Hiểu thị trường", "compass"),
-    (2, "Forecast", "Dự báo", "chart"),
-    (3, "Prepare", "Chuẩn bị", "package"),
-    (4, "Simulate", "Mô phỏng", "flask"),
-    (5, "Decide", "Quyết định", "target"),
-    (6, "Execute", "Triển khai", "rocket"),
-    (7, "Monitor & Learn", "Theo dõi & học", "activity"),
+    (1, "Hiểu thị trường", "Bối cảnh & insight", "compass"),
+    (2, "Dự báo", "Nhu cầu & doanh thu", "chart"),
+    (3, "Chuẩn bị", "Tồn kho & ngân sách", "package"),
+    (4, "Mô phỏng chiến dịch", "So sánh phương án", "flask"),
+    (5, "Quyết định", "Chọn phương án", "target"),
+    (6, "Triển khai", "Kế hoạch thực thi", "rocket"),
+    (7, "Học hỏi và tối ưu", "Theo dõi kết quả", "activity"),
 ]
 
 LOGO = """
 <div class="pp-logo">
   <div class="pp-logo-mark">
-    """ + icon("target", 18).replace('stroke="currentColor"', 'stroke="white"') + """
+    """ + icon("target", 18, color="white") + """
   </div>
   <div>
     <strong>PromotionPilot AI</strong>
