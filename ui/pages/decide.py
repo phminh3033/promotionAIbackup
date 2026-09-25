@@ -302,16 +302,15 @@ def _empty_decision() -> None:
             "target",
         )
     )
-    show(
-        f'<div class="pp-dec-metrics">{"".join([
-            recommendation_metric_card("Revenue lift", DASH, "chart", EMPTY, "blue"),
-            recommendation_metric_card("Profit impact", DASH, "dollar", EMPTY, "blue"),
-            recommendation_metric_card("ROI", DASH, "trend", EMPTY, "orange"),
-            recommendation_metric_card("Confidence", DASH, "shield-check", EMPTY, "purple"),
-            recommendation_metric_card("Risk", DASH, "shield-check", EMPTY, "green"),
-            recommendation_metric_card("Nhu cầu tồn kho", DASH, "package", EMPTY, "purple"),
-        ])}</div>'
-    )
+    empty_metrics = [
+        recommendation_metric_card("Revenue lift", DASH, "chart", EMPTY, "blue"),
+        recommendation_metric_card("Profit impact", DASH, "dollar", EMPTY, "blue"),
+        recommendation_metric_card("ROI", DASH, "trend", EMPTY, "orange"),
+        recommendation_metric_card("Confidence", DASH, "shield-check", EMPTY, "purple"),
+        recommendation_metric_card("Risk", DASH, "shield-check", EMPTY, "green"),
+        recommendation_metric_card("Nhu cầu tồn kho", DASH, "package", EMPTY, "purple"),
+    ]
+    show(f'<div class="pp-dec-metrics">{"".join(empty_metrics)}</div>')
     left, right = st.columns(2, gap="medium")
     with left:
         show(reason_list_panel("Lý do đề xuất", []))
