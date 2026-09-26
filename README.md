@@ -59,8 +59,9 @@ python scripts/generate_pharmacity_demo.py   # sinh dữ liệu demo (1 lần)
 streamlit run app.py
 ```
 
-Trình duyệt tự mở tại `http://localhost:8501`. Bấm **"Dùng dữ liệu Pharmacity mẫu"** ở trang chủ
-để trải nghiệm ngay, hoặc **"Tải file Excel mẫu"** để lấy file cấu trúc chuẩn tự điền dữ liệu thật.
+Trình duyệt tự mở tại `http://localhost:8501`. Ở trang **Tổng quan**, bấm **"Mở Data Workspace"**
+→ **"Dùng dữ liệu mẫu"** để trải nghiệm ngay, hoặc **"Tải file mẫu"** để lấy file Excel cấu trúc
+chuẩn rồi tự điền dữ liệu thật và upload lại.
 
 **Windows không rành dòng lệnh:** dùng `CAI_DAT_LAN_DAU.bat` (chạy 1 lần) rồi `CHAY_UNG_DUNG.bat`
 (chạy mỗi lần dùng) — xem [HUONG_DAN_CAI_DAT.txt](HUONG_DAN_CAI_DAT.txt).
@@ -87,11 +88,139 @@ Cả hai đều hỗ trợ deploy trực tiếp từ GitHub repo Python:
 - Build command: `pip install -r requirements.txt`
 - Start command: `streamlit run app.py --server.port $PORT --server.address 0.0.0.0`
 
-## 5. Website Structure (16 trang)
+## 5. Cấu trúc website & kiến trúc
 
-Trang chủ · Tải dữ liệu · Kiểm tra dữ liệu · Local Context · Mục tiêu kinh doanh · Forecast ·
-Tồn kho · Customer Insight · Product & Basket Insight · Promotion Simulator · AI Recommendation ·
-Execution Plan · Campaign Monitor · Alerts · Model & Confidence · Export Report.
+### Navigation hiện tại (10 trang)
+
+UI gộp theo workflow **7 bước quyết định** (thanh stage bar trong `ui/shell.py`), đăng ký qua
+`st.navigation` trong `app.py`:
+
+| Trang (`ui/pages/`) | Nhãn sidebar | Vai trò |
+|---|---|---|
+| `command_center` | Tổng quan | KPI, cơ hội, mở Data Workspace |
+| `understand` | Hiểu thị trường | Dữ liệu, Local Context, mục tiêu, RFM/Basket |
+| `forecast` | Dự báo | Auto Model Selection |
+| `prepare` | Chuẩn bị | Tồn kho, ngân sách, chuẩn bị triển khai |
+| `simulate` | Mô phỏng chiến dịch | Promotion Simulator — so sánh kịch bản |
+| `decide` | Quyết định | Recommendation + Top phương án |
+| `execute` | Triển khai | Execution Plan + nội dung marketing |
+| `monitor` | Học hỏi và tối ưu | Campaign Monitor + Alerts + Learning Loop |
+| `reports` | Báo cáo | Xuất Excel/CSV từ kết quả phiên |
+| `model_info` | Thông tin thêm | Model & độ tin cậy |
+
+Tải/map dữ liệu nằm trong **Data Workspace** (modal từ Tổng quan / Hiểu thị trường —
+`ui/pages/data_workspace.py`), không còn là trang sidebar riêng.
+
+Các trang Streamlit cũ (16 trang rời) được giữ ở `legacy_pages/` để tham chiếu; **không** còn là
+điểm vào chính của app.
+
+### Kiến trúc tổng quan (3 lớp)
+
+```mermaid
+flowchart TB
+  subgraph Client["Trình duyệt"]
+    UI["Streamlit UI<br/>ui/pages + ui/shell"]
+  end
+
+  subgraph App["app.py"]
+    Nav["st.navigation — 10 trang"]
+    Access["demo_access + theme CSS"]
+  end
+
+  subgraph Services["services/ — orchestration"]
+    WF["workflow.py"]
+    SME["ScientificModelEngine"]
+    RE["RecommendationEngine"]
+    AE["AgentEngine — LLM tùy chọn"]
+  end
+
+  subgraph Core["src/ — domain logic"]
+    Data["data: loader · mapper · quality · schema"]
+    Feat["features"]
+    FC["forecasting: 11 models + backtest + selector"]
+    Seg["segmentation: RFM + K-Means"]
+    Basket["basket: FP-Growth"]
+    Inv["inventory"]
+    Promo["promotion: mechanics · rules · simulator"]
+    Opt["optimization + roi"]
+    Rec["recommendation · timing · campaign"]
+    Ctx["context · business · execution"]
+    Mon["monitoring · alerts · learning"]
+  end
+
+  subgraph Config["Cấu hình & lưu trữ"]
+    YAML["config/business_rules.yaml"]
+    SS["st.session_state"]
+    Files["data/ · campaign_log/"]
+  end
+
+  subgraph Future["Kiến trúc sẵn — chưa nối API thật"]
+    Ext["external_signals/"]
+    Int["integrations/ POS · webhook · sync"]
+  end
+
+  Client --> App
+  App --> UI
+  UI --> WF
+  WF --> SME
+  WF --> RE
+  RE --> SME
+  RE -.-> AE
+  SME --> Core
+  WF --> Data
+  Core --> YAML
+  UI --> SS
+  Data --> SS
+  Core --> Files
+  Ext -.-> Core
+  Int -.-> Data
+```
+
+- **`ui/`** chỉ render và gọi `services/`; không chứa công thức nghiệp vụ.
+- **`services/workflow.py`** gắn UI với pipeline hiện có (load demo, forecast, simulate, decide…).
+- **`services/scientific_model_engine.py`** bọc các hàm `src/` (forecast, RFM, inventory, simulate…).
+- **`services/recommendation_engine.py`** dựng thẻ đề xuất; `AgentEngine` (LLM) chỉ enhance nội dung
+  khi được bật — **không** quyết định khuyến mãi.
+- **State dùng chung:** `src/utils/state.py` → `st.session_state` (`clean_df`, forecast cache,
+  scenario, recommendation, execution plan…). Qua F5/reload, snapshot được ghi/nạp bởi
+  `src/utils/session_persistence.py` (cookie + `?wid=` + file trong `config/session_workspace/`).
+- **Chưa nối nguồn thật:** `src/external_signals/`, `src/integrations/` (xem mục 9–10).
+
+### Luồng nghiệp vụ (7 bước)
+
+```mermaid
+flowchart LR
+  A["1. UNDERSTAND<br/>Dữ liệu + Local Context"] --> B["2. FORECAST<br/>Auto model selection"]
+  B --> C["3. PREPARE<br/>Inventory + Execution prep"]
+  C --> D["4. SIMULATE<br/>Kịch bản KM"]
+  D --> E["5. DECIDE<br/>Top recommendation"]
+  E --> F["6. EXECUTE<br/>Kế hoạch triển khai"]
+  F --> G["7. MONITOR & LEARN<br/>Alerts + Campaign log"]
+  G -.->|học từ kết quả| D
+```
+
+### Pipeline dữ liệu → quyết định
+
+```mermaid
+flowchart TD
+  Upload["CSV / XLSX / Demo Pharmacity"] --> Loader["load_raw_file"]
+  Loader --> Map["suggest_mapping → apply_mapping"]
+  Map --> Cap["DatasetCapabilities<br/>bật/tắt module theo cột có sẵn"]
+  Map --> QC["run_quality_check → clean_df"]
+  QC --> State["session_state.clean_df"]
+
+  State --> Agg["aggregate_daily + features"]
+  Agg --> Select["select_and_forecast<br/>WAPE thấp nhất"]
+  State --> RFM["RFM + K-Means"]
+  State --> MBA["Market Basket"]
+  Select --> InvPlan["Inventory planning"]
+  State --> Sim["simulate_scenarios + rules"]
+  Sim --> Score["score_scenarios theo objective"]
+  Score --> Card["build_recommendation_card"]
+  Card --> Exec["Execution Plan"]
+  Exec --> Monitor["Campaign Monitor + Alerts"]
+  Monitor --> Learn["campaign_log JSON"]
+```
 
 ## 6. Định dạng dữ liệu (Data Format)
 
@@ -111,7 +240,7 @@ Hệ thống **không crash** nếu thiếu trường tuỳ chọn — module li
 
 **File mẫu có sẵn:**
 - `data/pharmacity_demo.csv` — bộ demo lớn (~360.000 dòng, 6 tháng, 43 SKU, ~106.000 giao dịch,
-  30% thiếu CustomerID) dùng cho nút "Dùng dữ liệu Pharmacity mẫu".
+  30% thiếu CustomerID) dùng cho nút **"Dùng dữ liệu mẫu"** trong Data Workspace.
 - `data/mau_du_lieu_promotionpilot.xlsx` — file mẫu XLSX nhỏ có 3 sheet (Sales_Data,
   Promotion_Master, Business_Config) để tải về, tự điền dữ liệu thật, upload lại.
 
@@ -196,8 +325,9 @@ Xem chi tiết quy trình 5 ngày tại [`docs/huong_dan_pilot.md`](docs/huong_d
   bạn tự quyết định theo nhu cầu triển khai thực tế.
 - LLM (tuỳ chọn, mặc định **tắt**) chỉ nhận **số liệu tổng hợp** (aggregated summary) để sinh nội
   dung marketing — **không bao giờ** nhận dữ liệu giao dịch chi tiết (transaction-level).
-- **Ẩn/mã hoá Mã khách hàng**: bật ở trang Mục tiêu kinh doanh ("Ẩn/mã hoá Mã khách hàng") — hash
-  SHA-256 khi hiển thị/export, không đổi dữ liệu gốc dùng để tính toán (`src/utils/privacy.py`).
+- **Ẩn/mã hoá Mã khách hàng**: bật ở trang **Hiểu thị trường** ("Ẩn/mã hoá Mã khách hàng khi
+  hiển thị bảng chi tiết & xuất báo cáo") — hash SHA-256 khi hiển thị/export, không đổi dữ liệu
+  gốc dùng để tính toán (`src/utils/privacy.py`).
 - Không hard-code API key; cấu hình qua `.env` / Streamlit Secrets (xem `.env.example`).
 - Có thể bật **Demo Access Code** (`DEMO_ACCESS_CODE` trong `.env`) để hạn chế truy cập ngẫu nhiên
   khi deploy bản demo công khai.
@@ -205,38 +335,50 @@ Xem chi tiết quy trình 5 ngày tại [`docs/huong_dan_pilot.md`](docs/huong_d
 ## Cấu trúc thư mục
 
 ```
-promopilot-ai/
-  app.py                    # Điểm khởi chạy, định nghĩa navigation (16 trang)
-  pages/                    # Các trang Streamlit
+promotionpilot-ai/
+  app.py                         # Điểm khởi chạy — st.navigation (10 trang)
+  ui/
+    shell.py · nav.py            # Khung app, sidebar, thanh 7 bước
+    pages/                       # command_center, understand, forecast, prepare,
+                                 # simulate, decide, execute, monitor, reports, model_info
+                                 # + data_workspace (modal tải/map dữ liệu)
+    charts.py · components.py · formatters.py · icons.py
+  services/
+    workflow.py                  # Điều phối UI ↔ src (load, forecast, simulate, decide...)
+    scientific_model_engine.py   # Bọc model/logic khoa học trong src/
+    recommendation_engine.py     # Recommendation (+ AgentEngine LLM tùy chọn)
+    agent_engine.py              # LLM enhance nội dung — không quyết định KM
   src/
-    data/                   # loader (đa sheet), mapper, quality, schema
-    features/               # feature engineering cho time series
-    forecasting/            # 11 model, backtest, auto model selection
-    segmentation/           # RFM, K-Means
-    basket/                 # market basket analysis (FP-Growth)
-    inventory/              # inventory planning
-    promotion/              # mechanics, business rules, simulator
-    optimization/           # objective functions (5 mục tiêu, có BRANDING)
-    roi/                    # ROI calculator
-    recommendation/         # recommendation engine, timing, campaign generator
-    explainability/         # giải thích bằng ngôn ngữ kinh doanh
-    business/               # business profile onboarding
-    context/                # Local Context (business/customer/store context)
-    execution/               # Execution Plan generator (D-7..D+7)
-    monitoring/               # Campaign Monitor (Actual vs Forecast)
-    alerts/                    # Alert Engine + AI Action (Continue/Adjust/Stop/Scale)
-    learning/                  # Campaign Learning Loop (lưu lịch sử campaign)
-    external_signals/          # Kiến trúc sẵn sàng: weather, competitor, trends... (chưa kết nối)
-    integrations/               # Kiến trúc sẵn sàng: POS API, webhook... (chưa kết nối)
-    utils/                       # session state, privacy helpers
+    data/                        # loader (đa sheet), mapper, quality, schema
+    features/                    # feature engineering cho time series
+    forecasting/                 # 11 model, backtest, auto model selection
+    segmentation/                # RFM, K-Means
+    basket/                      # market basket analysis (FP-Growth)
+    inventory/                   # inventory planning
+    promotion/                   # mechanics, business rules, simulator
+    optimization/                # objective functions (5 mục tiêu, có BRANDING)
+    roi/                         # ROI calculator
+    recommendation/              # recommendation engine, timing, campaign generator
+    explainability/              # giải thích bằng ngôn ngữ kinh doanh
+    business/                    # business profile onboarding
+    context/                     # Local Context (business/customer/store context)
+    execution/                   # Execution Plan generator (D-7..D+7)
+    monitoring/                  # Campaign Monitor (Actual vs Forecast)
+    alerts/                      # Alert Engine + AI Action (Continue/Adjust/Stop/Scale)
+    learning/                    # Campaign Learning Loop (lưu lịch sử campaign)
+    external_signals/            # Kiến trúc sẵn sàng: weather, competitor, trends... (chưa kết nối)
+    integrations/                # Kiến trúc sẵn sàng: POS API, webhook... (chưa kết nối)
+    utils/                       # session state, privacy, demo_access, heavy_jobs
+  styles/theme.py                # CSS / theme Streamlit
+  legacy_pages/                  # Các trang Streamlit cũ (16 trang) — không còn entry chính
   config/
-    business_rules.yaml         # Cấu hình mặc định (margin, ROI, lead time...)
-    business_profiles/          # Hồ sơ doanh nghiệp đã lưu (tự tạo khi chạy)
+    business_rules.yaml          # Cấu hình mặc định (margin, ROI, lead time...)
+    business_profiles/           # Hồ sơ doanh nghiệp đã lưu (tự tạo khi chạy)
     campaign_log/                # Campaign Learning Loop (tự tạo khi chạy)
   data/                          # pharmacity_demo.csv, mau_du_lieu_promotionpilot.xlsx
-  scripts/                       # generate_pharmacity_demo.py, generate_demo_data.py, smoke_test_pipeline.py
-  tests/                         # pytest (61 test)
-  docs/                          # nghien_cuu_nen_tang.md, huong_dan_pilot.md, backlog, nhật ký nâng cấp
+  scripts/                       # generate_pharmacity_demo.py, smoke_test_pipeline.py, ...
+  tests/                         # pytest (~64 test)
+  docs/                          # nghien_cuu_nen_tang.md, huong_dan_pilot.md, backlog, nhật ký
   .claude/skills/nang-cap-promopilot/  # Skill tự nâng cấp có hệ thống
 ```
 

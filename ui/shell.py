@@ -9,7 +9,7 @@ from services.workflow import dataset_chip, period_chip
 from styles.theme import inject_css
 from ui.formatters import relative_time
 from ui.icons import icon
-from ui.nav import NAV, page
+from ui.nav import NAV, goto, page
 from src.utils.state import init_session_state
 
 STAGES = [
@@ -21,6 +21,17 @@ STAGES = [
     (6, "Triển khai", "Kế hoạch thực thi", "rocket"),
     (7, "Học hỏi và tối ưu", "Theo dõi kết quả", "activity"),
 ]
+
+# Map stage → page key — dùng để Simulate biết user vừa navigate về từ trang khác.
+_STAGE_PAGE_KEY = {
+    1: "understand",
+    2: "forecast",
+    3: "prepare",
+    4: "simulate",
+    5: "decide",
+    6: "execute",
+    7: "monitor",
+}
 
 LOGO = """
 <div class="pp-logo">
@@ -36,7 +47,19 @@ LOGO = """
 
 
 def render_shell(title: str, subtitle: str, stage: int | None = None, eyebrow: str = "Xin chào!") -> None:
+    from src.utils.state import persist_session_inputs
+
     init_session_state()
+    # Đồng bộ widget → session mỗi lần vào trang (kể cả sau khi click left menu).
+    persist_session_inputs()
+    if stage in _STAGE_PAGE_KEY:
+        st.session_state["_pp_active_page"] = _STAGE_PAGE_KEY[stage]
+    try:
+        from src.utils.session_persistence import inject_workspace_cookie
+
+        inject_workspace_cookie()
+    except Exception:  # noqa: BLE001
+        pass
     inject_css()
     _sidebar()
     chips = _chips()
@@ -67,6 +90,7 @@ def _chips() -> str:
 
 
 def _stages(current: int) -> str:
+    """Thanh 7 bước — chỉ hiển thị tiến trình, không click điều hướng."""
     parts = ['<div class="pp-stagebar"><div class="pp-stages">']
     for number, label, sub, icon_key in STAGES:
         if current and number < current:
@@ -77,8 +101,8 @@ def _stages(current: int) -> str:
             klass = "pp-stage"
         parts.append(
             f'<div class="{klass}"><div class="pp-num">{number}</div>'
-            f'<span class="t">{icon(icon_key, 14)}<span>{label}</span></span>'
-            f'<span class="s">{sub}</span></div>'
+            f'<span class="t">{icon(icon_key, 14)}<span>{escape(label)}</span></span>'
+            f'<span class="s">{escape(sub)}</span></div>'
         )
     parts.append("</div></div>")
     return "".join(parts)
@@ -102,8 +126,8 @@ def _sidebar() -> None:
 
 
 def continue_button(label: str, target: str, key: str) -> None:
-    from ui.nav import goto
-
+    """Nút chuyển bước — full width, cùng độ dài giữa các trang."""
+    st.markdown('<div class="pp-continue-row" aria-hidden="true"></div>', unsafe_allow_html=True)
     if st.button(label, type="primary", key=key, width="stretch"):
         goto(target)
 

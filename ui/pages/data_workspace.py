@@ -20,7 +20,8 @@ CHECKS = [
     ("Dữ liệu khuyến mãi", lambda report, caps: (bool(caps.has_promotion), "Có lịch sử khuyến mãi" if caps.has_promotion else "Thiếu lịch sử khuyến mãi")),
 ]
 
-_MAX_UPLOAD_MB = max(1, int(os.getenv("DEMO_MAX_UPLOAD_MB", "5")))
+# Sàn cứng 30 MB — env cũ DEMO_MAX_UPLOAD_MB=5 không được phép hạ thấp hơn.
+_MAX_UPLOAD_MB = max(30, int(os.getenv("DEMO_MAX_UPLOAD_MB", "30") or "30"))
 
 
 @st.dialog("Data Workspace", width="large")
@@ -55,43 +56,85 @@ def _sources() -> None:
             st.caption("Chưa có file mẫu. Chạy python scripts/generate_pharmacity_demo.py.")
     show(card(
         kicker("Tải file dữ liệu của bạn")
-        + muted(f"CSV/Excel từ POS. Tối đa {_MAX_UPLOAD_MB} MB khi buổi demo đông người."),
+        + muted(f"CSV/Excel từ POS. Tối đa {_MAX_UPLOAD_MB} MB mỗi file."),
         style="margin-top:12px",
     ))
-    uploaded = st.file_uploader("Chọn file", type=["csv", "xlsx", "xls"], label_visibility="collapsed")
-    if uploaded is not None:
-        _read_upload(uploaded)
+    # accept_multiple_files=True giữ nút "+" để thêm file.
+    uploaded_files = st.file_uploader(
+        "Chọn file",
+        type=["csv", "xlsx", "xls"],
+        accept_multiple_files=True,
+        label_visibility="collapsed",
+        key="dw_file_uploader",
+    )
+    if not uploaded_files:
+        return
 
-
-def _read_upload(uploaded) -> None:
     max_bytes = _MAX_UPLOAD_MB * 1024 * 1024
-    if uploaded.size > max_bytes:
-        st.error(
-            f"File quá lớn ({uploaded.size / (1024 * 1024):.1f} MB). "
-            f"Buổi demo giới hạn {_MAX_UPLOAD_MB} MB — hãy dùng nút «Dùng dữ liệu mẫu»."
-        )
-        return
-    file_bytes = uploaded.getvalue()
-    sheet_name = None
-    if Path(uploaded.name).suffix.lower() in {".xlsx", ".xls"}:
-        sheets = list_excel_sheets(file_bytes)
-        if len(sheets) > 1:
-            default_idx = next(
-                (i for i, name in enumerate(sheets) if name.strip().lower() in {"sales_data", "sales data", "data"}),
-                0,
+    ok_files = []
+    for uploaded in uploaded_files:
+        if uploaded.size > max_bytes:
+            st.error(
+                f"File «{uploaded.name}» quá lớn ({uploaded.size / (1024 * 1024):.1f} MB). "
+                f"Giới hạn {_MAX_UPLOAD_MB} MB mỗi file."
             )
-            sheet_name = st.selectbox("Sheet dữ liệu bán hàng", sheets, index=default_idx)
-    try:
-        raw_df = load_raw_file(file_bytes, uploaded.name, sheet_name=sheet_name)
-    except DataLoadError as exc:
-        st.error(str(exc))
+        else:
+            ok_files.append(uploaded)
+
+    if not ok_files:
         return
+
+    # Chọn sheet nếu file Excel gần nhất có nhiều sheet (trước khi xác nhận).
+    primary = ok_files[-1]
+    sheet_name = _sheet_selector(primary)
+
+    if st.button("Xác nhận", type="primary", key="dw_confirm_upload"):
+        with st.spinner(f"Đang nạp {primary.name} vào hệ thống..."):
+            ok, message = _confirm_and_load(primary, sheet_name=sheet_name)
+        if ok:
+            st.success(message)
+            st.rerun()
+        st.error(message)
+
+
+def _sheet_selector(uploaded) -> str | None:
+    if Path(uploaded.name).suffix.lower() not in {".xlsx", ".xls"}:
+        return None
+    try:
+        sheets = list_excel_sheets(uploaded.getvalue())
+    except Exception:
+        return None
+    if len(sheets) <= 1:
+        return sheets[0] if sheets else None
+    default_idx = next(
+        (i for i, name in enumerate(sheets) if name.strip().lower() in {"sales_data", "sales data", "data"}),
+        0,
+    )
+    return st.selectbox("Sheet dữ liệu bán hàng", sheets, index=default_idx, key="dw_sheet_select")
+
+
+def _confirm_and_load(uploaded, sheet_name: str | None = None) -> tuple[bool, str]:
+    """Đọc file đã upload và nạp vào session (pending + commit nếu map đủ)."""
+    try:
+        raw_df = load_raw_file(uploaded.getvalue(), uploaded.name, sheet_name=sheet_name)
+    except DataLoadError as exc:
+        return False, str(exc)
+
+    mapping = suggest_mapping(list(raw_df.columns))
     st.session_state["pending_raw_df"] = raw_df
     st.session_state["pending_filename"] = uploaded.name
-    if st.session_state.get("pending_file_token") != (uploaded.name, uploaded.size):
-        st.session_state["pending_mapping"] = suggest_mapping(list(raw_df.columns))
-        st.session_state["pending_file_token"] = (uploaded.name, uploaded.size)
-    st.success(f"Đã đọc {uploaded.name}: {raw_df.shape[0]:,} dòng, {raw_df.shape[1]} cột.")
+    st.session_state["pending_mapping"] = mapping
+    st.session_state["pending_file_token"] = (uploaded.name, uploaded.size)
+
+    ok, message = commit_dataset(raw_df, uploaded.name, mapping)
+    if ok:
+        return True, f"Đã nạp {uploaded.name}: {raw_df.shape[0]:,} dòng, {raw_df.shape[1]} cột. {message}"
+    # Map thiếu — giữ pending để user chỉnh ở bước ánh xạ bên dưới.
+    return (
+        False,
+        f"Đã đọc {uploaded.name} ({raw_df.shape[0]:,} dòng) nhưng chưa nạp đủ: {message}. "
+        "Hãy chỉnh ánh xạ cột bên dưới rồi bấm «Áp dụng ánh xạ và kiểm tra chất lượng».",
+    )
 
 
 def _mapping() -> None:

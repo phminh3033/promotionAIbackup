@@ -12,9 +12,9 @@
 
 ## 3. Biến môi trường (Variables)
 ```
-DEMO_ACCESS_CODE=PROMO2026
-DEMO_MAX_HEAVY_JOBS=4
-DEMO_MAX_UPLOAD_MB=5
+DEMO_ACCESS_CODE=
+DEMO_MAX_HEAVY_JOBS=10
+DEMO_MAX_UPLOAD_MB=30
 LLM_ENABLED=false
 ```
 Đổi mã PROMO2026 thành mã riêng của buổi demo. Phát mã cho người tham dự.

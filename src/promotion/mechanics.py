@@ -23,7 +23,7 @@ MECHANIC_LABELS_VI = {
     "no_promo": "Không khuyến mãi",
     "discount_percent": "Giảm giá theo %",
     "discount_fixed": "Giảm giá số tiền cố định",
-    "bogo": "Mua 1 Tặng 1 (BOGO)",
+    "bogo": "Mua 1 Tặng 1 (B1G1)",
     "buy_x_get_y": "Mua X Tặng Y",
     "bundle": "Combo / Bundle",
     "gift": "Tặng quà kèm theo",

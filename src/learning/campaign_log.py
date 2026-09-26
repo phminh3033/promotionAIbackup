@@ -1,21 +1,17 @@
 """Campaign Learning Loop (mục XXXII spec PromotionPilot AI).
 
-Lưu lại từng campaign đã chạy (objective, scenario, forecast, actual, variance, ROI, AI
-recommendation, outcome) để campaign sau có thể tham chiếu lại — nền tảng cho việc dần dần thay
-giả định elasticity mặc định bằng dữ liệu lịch sử thật (xem src/promotion/mechanics.py::
-estimate_historical_uplift và docs/backlog_tinh_nang.md).
-
-MVP dùng file JSON local (giống src/business/profile.py) — không cần SQLite/Supabase để giữ đơn
-giản; có thể nâng cấp sau nếu cần nhiều người dùng cùng lúc.
+Kho chiến dịch trong `st.session_state["campaign_records"]`, đồng bộ ra workspace đĩa
+qua `save_workspace_now()` để sống sót F5/reload trình duyệt (cùng cơ chế session_persistence).
 """
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from pathlib import Path
 
-LOG_DIR = Path(__file__).resolve().parent.parent.parent / "config" / "campaign_log"
+SESSION_KEY = "campaign_records"
+
+# Fallback khi gọi ngoài Streamlit (script/test) — không ghi file.
+_MEMORY_FALLBACK: dict[str, "CampaignRecord"] = {}
 
 
 @dataclass
@@ -38,31 +34,74 @@ class CampaignRecord:
         return asdict(self)
 
 
-def save_campaign_record(record: CampaignRecord) -> Path:
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    path = LOG_DIR / f"{record.campaign_id}.json"
-    path.write_text(json.dumps(record.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
-    return path
+def _store() -> dict[str, CampaignRecord]:
+    """Kho chiến dịch gắn session Streamlit; ngoài Streamlit dùng dict tạm trong process."""
+    try:
+        import streamlit as st
+
+        if SESSION_KEY not in st.session_state or not isinstance(st.session_state[SESSION_KEY], dict):
+            st.session_state[SESSION_KEY] = {}
+        return st.session_state[SESSION_KEY]
+    except Exception:  # noqa: BLE001 — script/test không có runtime Streamlit
+        return _MEMORY_FALLBACK
+
+
+def _as_record(value) -> CampaignRecord | None:
+    if isinstance(value, CampaignRecord):
+        return value
+    if isinstance(value, dict):
+        try:
+            return CampaignRecord(**value)
+        except TypeError:
+            return None
+    return None
+
+
+def normalize_campaign_records_map(raw) -> dict[str, CampaignRecord]:
+    """Chuẩn hoá map id→CampaignRecord sau hydrate/pickle (dict thuần → dataclass)."""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, CampaignRecord] = {}
+    for key, value in raw.items():
+        record = _as_record(value)
+        if record is None:
+            continue
+        out[str(record.campaign_id or key)] = record
+    return out
+
+
+def save_campaign_record(record: CampaignRecord) -> str:
+    """Ghi/ghi đè record trong session + ép snapshot đĩa (giữ qua reload)."""
+    store = _store()
+    store[record.campaign_id] = record
+    try:
+        from src.utils.state import save_workspace_now
+
+        save_workspace_now()
+    except Exception:  # noqa: BLE001 — không chặn UI nếu persistence lỗi
+        pass
+    return record.campaign_id
 
 
 def load_campaign_record(campaign_id: str) -> CampaignRecord | None:
-    path = LOG_DIR / f"{campaign_id}.json"
-    if not path.exists():
-        return None
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return CampaignRecord(**data)
+    return _as_record(_store().get(campaign_id))
 
 
 def list_campaign_records() -> list[CampaignRecord]:
-    if not LOG_DIR.exists():
-        return []
-    records = []
-    for p in sorted(LOG_DIR.glob("*.json"), reverse=True):
+    store = _store()
+    normalized = normalize_campaign_records_map(store)
+    # Ghi lại map đã chuẩn hoá nếu snapshot mang dict thuần / lẫn type.
+    if any(not isinstance(v, CampaignRecord) for v in store.values()) or len(normalized) != len(store):
         try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-            records.append(CampaignRecord(**data))
-        except Exception:  # noqa: BLE001 - file lỗi thì bỏ qua, không crash trang Monitor
-            continue
+            import streamlit as st
+
+            st.session_state[SESSION_KEY] = normalized
+        except Exception:  # noqa: BLE001
+            store.clear()
+            store.update(normalized)
+
+    records = list(normalized.values())
+    records.sort(key=lambda item: item.created_at or "", reverse=True)
     return records
 
 

@@ -1,7 +1,7 @@
 """Điều phối UI gọi đúng hàm src/ hiện có. Không đổi công thức, không bịa số liệu."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -95,6 +95,9 @@ def commit_dataset(raw_df, filename: str, mapping: dict) -> tuple[bool, str]:
     st.session_state["quality_report"] = report
     st.session_state["data_loaded_at"] = datetime.now()
     reset_downstream()
+    from src.utils.state import save_workspace_now
+
+    save_workspace_now()
     return True, f"Đã xử lý {len(clean_df):,} dòng hợp lệ. Điểm chất lượng {report.score}/100."
 
 
@@ -120,6 +123,9 @@ def load_demo_dataset() -> tuple[bool, str]:
         business_name="Nhà thuốc Demo (Pharmacity-style)",
         industry="Dược phẩm / Nhà thuốc",
     )
+    from src.utils.state import save_workspace_now
+
+    save_workspace_now()
     n = len(bundle["clean_df"])
     score = bundle["report"].score
     return True, f"Đã xử lý {n:,} dòng hợp lệ. Điểm chất lượng {score}/100."
@@ -305,6 +311,9 @@ def run_forecast(scope: str, scope_value, metric_col: str, metric_label: str, ho
     cache_key = f"{scope}|{scope_value}|{metric_col}|{horizon}"
     st.session_state["forecast_cache"][cache_key] = result
     st.session_state["forecast_history"][cache_key] = y.tail(90)
+    from src.utils.state import save_workspace_now
+
+    save_workspace_now()
     return cache_key, result, y.tail(90)
 
 
@@ -337,6 +346,9 @@ def run_inventory(lead_time: int, safety_days: int) -> pd.DataFrame:
     profile = st.session_state["business_profile"]
     profile.lead_time_days = int(lead_time)
     profile.safety_stock_days = int(safety_days)
+    from src.utils.state import save_workspace_now
+
+    save_workspace_now()
     return plan
 
 
@@ -424,7 +436,24 @@ def run_simulation(scope: str, scope_value: str, promo_days: int, gift_cost: flo
         "bundle": ENGINE.depth("bundle", unit_cost, avg_price, profile.min_margin_pct, profile.max_discount_pct),
     }
     hist = ENGINE.historical_uplift(scoped) if caps.has_promotion else {}
-    sim = ENGINE.simulate(baseline, hist, gift_cost, max_overrides)
+    from src.promotion.simulator import build_simulation_scenarios
+
+    scenarios = build_simulation_scenarios(
+        allowed_mechanics=list(profile.allowed_mechanics or []),
+        historical_uplifts=hist,
+        max_discount_overrides=max_overrides,
+        max_discount_pct=float(profile.max_discount_pct),
+        avg_price=float(avg_price),
+    )
+    sim = ENGINE.simulate(
+        baseline,
+        hist,
+        gift_cost,
+        max_overrides,
+        scenarios=scenarios,
+        allowed_mechanics=list(profile.allowed_mechanics or []),
+        max_discount_pct=float(profile.max_discount_pct),
+    )
     roi_table = compute_roi_breakdown(sim.table, baseline)
     scored = score_scenarios(roi_table, objective, current_inventory=None)
     scored["bi_tu_choi"] = scored["mechanic"].isin(rejected) & (scored["mechanic"] != "no_promo")
@@ -432,20 +461,61 @@ def run_simulation(scope: str, scope_value: str, promo_days: int, gift_cost: flo
     st.session_state["last_rule_verdicts"] = verdicts
     st.session_state["last_scenario_table"] = scored
     st.session_state["last_scenario_baseline"] = baseline
+
+    from src.promotion.sim_setup import build_setup_snapshot
+
+    period = st.session_state.get("sim_period")
+    start = date.today()
+    end = start + pd.Timedelta(days=max(int(promo_days), 1) - 1)
+    end = end.date() if hasattr(end, "date") else end
+    if isinstance(period, (list, tuple)) and len(period) == 2:
+        raw_start, raw_end = period[0], period[1]
+        if hasattr(raw_start, "date") and not isinstance(raw_start, date):
+            raw_start = raw_start.date()
+        if hasattr(raw_end, "date") and not isinstance(raw_end, date):
+            raw_end = raw_end.date()
+        if isinstance(raw_start, date):
+            start = raw_start
+        if isinstance(raw_end, date):
+            end = raw_end
+        if end < start:
+            end = start
+
+    try:
+        budget_raw = st.session_state.get("sim_budget")
+        budget = float(budget_raw if budget_raw is not None else profile.promotion_budget)
+    except (TypeError, ValueError):
+        budget = float(profile.promotion_budget or 0)
+
+    setup = build_setup_snapshot(
+        scope=scope,
+        scope_value=scope_value,
+        promo_days=int(promo_days),
+        gift_cost=float(gift_cost),
+        campaign_start=start,
+        campaign_end=end,
+        budget=budget,
+        max_discount_pct=float(profile.max_discount_pct),
+        min_margin_pct=float(profile.min_margin_pct),
+    )
     st.session_state["last_scenario_meta"] = {
-        "scope": scope,
-        "scope_value": scope_value,
-        "product_focus_label": scope_value,
-        "promo_days": int(promo_days),
-        "gift_cost_per_unit": float(gift_cost),
+        **setup,
         "hist_uplift": hist,
         "objective": objective,
         "current_inventory": current_inventory,
         "current_margin": float(current_margin),
         "velocity_change": float(velocity_change),
+        "scenario_source": "profile_history_depth",
+        "n_scenarios": int(len(scenarios)),
     }
     st.session_state["selected_mechanic"] = None
     st.session_state["last_recommendation_card"] = None
+    # Invalidate draft Execute cũ — sẽ đồng bộ lại từ meta khi vào Execute sau Decide.
+    st.session_state.pop("execute_campaign", None)
+    st.session_state.pop("_execute_plan_sig", None)
+    from src.utils.state import save_workspace_now
+
+    save_workspace_now()
     return True, DISCLAIMER_VI
 
 
@@ -605,6 +675,9 @@ def build_decision(mechanic: str | None = None):
     st.session_state["last_recommendation_card"] = card
     st.session_state["decision_tradeoffs"] = tradeoffs
     st.session_state["decision_objective_label"] = OBJECTIVE_LABELS_VI[objective]
+    from src.utils.state import save_workspace_now
+
+    save_workspace_now()
     return card
 
 

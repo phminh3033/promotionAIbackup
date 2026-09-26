@@ -26,10 +26,10 @@ from ui.components import (
     placeholder_table,
     section,
     show,
-    banner,
 )
 from ui.formatters import compact_vnd, integer, pct, roi_label, vnd
-from ui.shell import data_modal_button, render_shell
+from ui.nav import goto
+from ui.shell import render_shell
 
 STATUS = {
     "CONTINUE": ("On track", "ok"),
@@ -53,10 +53,8 @@ def render() -> None:
             kpi_card("Biên lợi nhuận", "Margin", DASH, None, [], "#EC4899", ICO_PCT, note=EMPTY),
             kpi_card("Hiệu quả marketing", "ROI mô phỏng", DASH, None, [], "#F97316", ICO_TREND, note=EMPTY),
         ]))
-        show(banner("Chưa có dữ liệu trong phiên làm việc. Mở Data Workspace để dùng dữ liệu mẫu hoặc tải file bán hàng của bạn."))
-        cta, _rest = st.columns([1, 2.4])
-        with cta:
-            data_modal_button("cc_open_data", label="Mở Data Workspace")
+        if st.button("Bắt đầu tiến hành nạp dữ liệu", type="primary", key="cc_start_load_data"):
+            goto("understand")
         st.radio("Kỳ biểu đồ", ["Tháng", "Quý", "Năm"], horizontal=True, key="cc_grain_empty", label_visibility="collapsed")
         show(chart_card("Xu hướng doanh thu theo thời gian"))
     else:
@@ -129,7 +127,7 @@ def _opportunities() -> None:
 
 def _campaigns() -> None:
     records = list_campaign_records()
-    show(section("Chiến dịch đang triển khai", "Nhật ký campaign đã lưu trên máy.", ICO_CART))
+    show(section("Chiến dịch đang triển khai", "Nhật ký campaign trong phiên hiện tại.", ICO_CART))
     if not records:
         show(placeholder_table(["Chiến dịch", "Thời gian", "Doanh thu", "ROI", "Trạng thái"], rows=3))
         return

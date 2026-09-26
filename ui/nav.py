@@ -30,4 +30,8 @@ def page(key: str):
 
 
 def goto(key: str) -> None:
+    """Chuyển trang — đồng bộ input phiên trước để không mất dữ liệu/kết quả mô hình."""
+    from src.utils.state import persist_session_inputs
+
+    persist_session_inputs()
     st.switch_page(_PAGES[key])

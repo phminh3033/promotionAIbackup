@@ -73,7 +73,13 @@ def main():
         promo_days=5,
         avg_daily_customers=sku_df.groupby(sku_df["date"].dt.normalize())["customer_id"].nunique().mean(),
     )
-    sim = simulate_scenarios(baseline, historical_uplifts=hist_uplift)
+    sim = simulate_scenarios(
+        baseline,
+        historical_uplifts=hist_uplift,
+        allowed_mechanics=["discount_percent", "bogo", "bundle", "gift"],
+        max_discount_pct=0.15,
+        max_discount_overrides={"discount_percent": 0.15, "bundle": 0.12},
+    )
     roi_table = compute_roi_breakdown(sim.table, baseline)
     print(f"[9] Scenario simulation cho SKU {sample_sku}:")
     print(roi_table[["scenario", "san_luong", "doanh_thu", "loi_nhuan_gop", "roi"]])

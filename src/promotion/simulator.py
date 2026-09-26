@@ -5,23 +5,19 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from src.promotion.mechanics import BaselineMetrics, compute_mechanic_result, default_unit_uplift
+from src.promotion.mechanics import (
+    MECHANIC_CALC_KIND,
+    MECHANIC_LABELS_VI,
+    BaselineMetrics,
+    compute_mechanic_result,
+    default_unit_uplift,
+)
 
 DISCLAIMER_VI = (
     "Đây là mô phỏng dựa trên historical response / elasticity assumption, "
     "chưa phải causal uplift đã được chứng minh. Kết quả nên dùng để SO SÁNH tương đối "
     "giữa các kịch bản, không nên xem là con số cam kết chính xác tuyệt đối."
 )
-
-# Định nghĩa kịch bản mặc định (mục XVI): A-No Promo, B-Discount5%, C-Discount10%, D-BOGO, E-Bundle, F-Gift
-DEFAULT_SCENARIOS: list[dict] = [
-    {"scenario": "A. Không khuyến mãi", "mechanic": "no_promo", "param": 0.0},
-    {"scenario": "B. Giảm giá 5%", "mechanic": "discount_percent", "param": 0.05},
-    {"scenario": "C. Giảm giá 10%", "mechanic": "discount_percent", "param": 0.10},
-    {"scenario": "D. Mua 1 Tặng 1 (BOGO)", "mechanic": "bogo", "param": 0.5},
-    {"scenario": "E. Combo/Bundle -12%", "mechanic": "bundle", "param": 0.12},
-    {"scenario": "F. Tặng quà kèm theo", "mechanic": "gift", "param": 0.0},
-]
 
 
 @dataclass
@@ -31,17 +27,104 @@ class ScenarioSimulationResult:
     baseline: BaselineMetrics
 
 
+def build_simulation_scenarios(
+    *,
+    allowed_mechanics: list[str] | None,
+    historical_uplifts: dict[str, dict] | None = None,
+    max_discount_overrides: dict[str, float] | None = None,
+    max_discount_pct: float = 0.3,
+    avg_price: float = 0.0,
+) -> list[dict]:
+    """Ghép kịch bản từ hồ sơ + lịch sử + ngưỡng depth — không dùng danh sách A–F cứng trong source.
+
+    - Baseline `no_promo` luôn có để so sánh tương đối.
+    - Mỗi cơ chế trong `allowed_mechanics` (và/hoặc có historical uplift) → đúng 1 kịch bản.
+    - Độ sâu giảm giá lấy từ `max_discount_overrides` (rule/ML depth) hoặc `max_discount_pct` hồ sơ.
+    """
+    historical_uplifts = historical_uplifts or {}
+    max_discount_overrides = max_discount_overrides or {}
+    allowed = [m for m in (allowed_mechanics or []) if m and m != "no_promo" and m in MECHANIC_CALC_KIND]
+
+    pool: list[str] = []
+    for mech in allowed:
+        if mech not in pool:
+            pool.append(mech)
+    # Cơ chế từng quan sát trong dữ liệu (nếu vẫn được phép, hoặc khi chưa cấu hình allowed).
+    for mech in historical_uplifts:
+        if mech == "no_promo" or mech not in MECHANIC_CALC_KIND:
+            continue
+        if allowed and mech not in allowed:
+            continue
+        if mech not in pool:
+            pool.append(mech)
+
+    scenarios: list[dict] = [
+        {"scenario": MECHANIC_LABELS_VI["no_promo"], "mechanic": "no_promo", "param": 0.0},
+    ]
+    for mech in pool:
+        param = _param_for_mechanic(mech, max_discount_overrides, max_discount_pct, avg_price)
+        scenarios.append(
+            {
+                "scenario": _scenario_label(mech, param),
+                "mechanic": mech,
+                "param": param,
+            }
+        )
+    return scenarios
+
+
+def _param_for_mechanic(
+    mechanic: str,
+    overrides: dict[str, float],
+    max_discount_pct: float,
+    avg_price: float,
+) -> float:
+    """Tham số mô phỏng theo loại cơ chế — depth từ rule engine khi có."""
+    pct_depth = float(overrides.get(mechanic, overrides.get("discount_percent", max_discount_pct)))
+    pct_depth = max(0.0, min(0.9, pct_depth))
+    if mechanic in ("discount_percent", "bundle", "coupon", "member_price", "buy_more_save_more"):
+        return pct_depth
+    if mechanic == "discount_fixed":
+        # [ASSUMPTION]: quy đổi % depth tối đa → số tiền / đơn vị theo giá baseline.
+        return max(0.0, float(avg_price) * pct_depth)
+    if mechanic in ("bogo", "buy_x_get_y"):
+        # Định nghĩa B1G1: 50% đơn vị miễn phí — không phải “kịch bản mẫu” cứng A–F.
+        return 0.5
+    if mechanic == "gift":
+        return 0.0
+    return pct_depth
+
+
+def _scenario_label(mechanic: str, param: float) -> str:
+    base = MECHANIC_LABELS_VI.get(mechanic, mechanic)
+    if mechanic in ("discount_percent", "bundle", "coupon", "member_price", "buy_more_save_more") and param > 0:
+        return f"{base} ({param:.0%})"
+    if mechanic == "discount_fixed" and param > 0:
+        return f"{base} (−{param:,.0f} đ)"
+    return base
+
+
 def simulate_scenarios(
     baseline: BaselineMetrics,
     historical_uplifts: dict[str, dict] | None = None,
     scenarios: list[dict] | None = None,
     gift_cost_per_unit: float = 0.0,
     max_discount_overrides: dict[str, float] | None = None,
+    *,
+    allowed_mechanics: list[str] | None = None,
+    max_discount_pct: float = 0.3,
 ) -> ScenarioSimulationResult:
     """Chạy toàn bộ kịch bản khuyến mãi cho một baseline (1 SKU, 1 category, hoặc toàn công ty)."""
-    scenarios = scenarios or DEFAULT_SCENARIOS
     historical_uplifts = historical_uplifts or {}
     max_discount_overrides = max_discount_overrides or {}
+    if scenarios is None:
+        scenarios = build_simulation_scenarios(
+            allowed_mechanics=allowed_mechanics,
+            historical_uplifts=historical_uplifts,
+            max_discount_overrides=max_discount_overrides,
+            max_discount_pct=max_discount_pct,
+            avg_price=float(baseline.avg_price),
+        )
 
     rows = []
     for sc in scenarios:

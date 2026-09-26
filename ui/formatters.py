@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import re
 from datetime import datetime
 
 
@@ -37,6 +38,36 @@ def integer(value) -> str:
     if not _finite(value):
         return "—"
     return f"{float(value):,.0f}".replace(",", ".")
+
+
+def integer_comma(value) -> str:
+    """Số nguyên với dấu phẩy phân tách hàng nghìn (vd: 43,489)."""
+    if not _finite(value):
+        return "—"
+    return f"{float(value):,.0f}"
+
+
+def format_int_commas(value, *, default: int = 0) -> str:
+    """Chuỗi số nguyên có dấu phẩy — dùng cho ô nhập liệu."""
+    try:
+        number = int(float(value))
+    except (TypeError, ValueError):
+        number = default
+    return f"{number:,}"
+
+
+def parse_int_commas(text, *, default: int = 0, minimum: int | None = None) -> int:
+    """Parse chuỗi có dấu phẩy/ký tự thừa → số nguyên."""
+    cleaned = str(text or "").strip().replace(",", "").replace(" ", "")
+    if re.fullmatch(r"\d+\.\d+", cleaned):
+        # vd: 8.00 / 8.5 → lấy phần nguyên (không gộp thành 800)
+        value = int(float(cleaned))
+    else:
+        digits = "".join(ch for ch in cleaned if ch.isdigit())
+        value = int(digits) if digits else default
+    if minimum is not None:
+        value = max(minimum, value)
+    return value
 
 
 def pct(value, digits: int = 1) -> str:

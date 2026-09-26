@@ -23,6 +23,12 @@ def require_demo_access() -> None:
         if st.button("Xác nhận", type="primary", width="stretch"):
             if code_input.strip() == code:
                 st.session_state["demo_access_granted"] = True
+                try:
+                    from src.utils.state import save_workspace_now
+
+                    save_workspace_now()
+                except Exception:  # noqa: BLE001
+                    pass
                 st.rerun()
             st.error("Mã truy cập không đúng. Vui lòng liên hệ đội ngũ demo.")
     st.stop()

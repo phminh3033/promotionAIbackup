@@ -1,6 +1,7 @@
 """Monitor & Learn: UI theo template — logic KPI/alert/learning giữ nguyên từ engine hiện có."""
 from __future__ import annotations
 
+import io
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -8,7 +9,13 @@ import streamlit as st
 
 from src.alerts.engine import decide_action, evaluate_alerts
 from src.learning.campaign_log import list_campaign_records, save_campaign_record
-from src.monitoring.campaign_monitor import build_daily_baseline, compare_actual_vs_forecast, cumulative_variance
+from src.monitoring.campaign_monitor import (
+    build_daily_baseline,
+    compare_actual_vs_forecast,
+    compute_actual_roi,
+    cumulative_variance,
+    resolve_promo_cost,
+)
 from ui.charts import actual_vs_forecast_overlay, show_chart
 from ui.components import (
     DASH,
@@ -22,11 +29,9 @@ from ui.components import (
     performance_metric_card,
     show,
 )
-from ui.formatters import integer, pct, roi_label, signed_pct, vnd
+from ui.formatters import format_int_commas, integer, parse_int_commas, pct, roi_label, signed_pct, vnd
 from ui.nav import goto
 from ui.shell import render_shell
-
-ALERT_VISIBLE = 3
 
 # Metric chart: chỉ các cột có trong compared dataframe (actual + forecast).
 CHART_METRICS = [
@@ -95,21 +100,35 @@ def build_monitor_view_model(record, compared, alerts, action) -> MonitorViewMod
     vm.has_actual = bool(actual_rows)
 
     variance = record.variance or {}
-    revenue = _sum_field(actual_rows, "revenue")
-    customers = _sum_field(actual_rows, "customers")
-    gp = _sum_field(actual_rows, "gp")
-    margin_actual = (gp / revenue) if revenue and revenue > 0 and gp is not None else None
+    # Ưu tiên bảng compared (cùng nguồn với chart); fallback daily_rows — bỏ NaN khi cộng.
+    if compared is not None and not getattr(compared, "empty", True):
+        revenue = _sum_series(compared["revenue"]) if "revenue" in compared.columns else _sum_field(actual_rows, "revenue")
+        customers = (
+            _sum_series(compared["customers"]) if "customers" in compared.columns else _sum_field(actual_rows, "customers")
+        )
+        gp = _sum_series(compared["gp"]) if "gp" in compared.columns else _sum_field(actual_rows, "gp")
+    else:
+        revenue = _sum_field(actual_rows, "revenue")
+        customers = _sum_field(actual_rows, "customers")
+        gp = _sum_field(actual_rows, "gp")
+
+    margin_actual = (gp / revenue) if revenue is not None and revenue > 0 and gp is not None else None
     margin_forecast = _forecast_margin(record)
+
+    # Tính lại ROI mỗi lần render — không phụ thuộc lần lưu cũ (cost=0 → roi_actual=None).
+    roi_actual = _roi_from_record(record, compared)
+    if roi_actual is not None:
+        record.roi_actual = roi_actual
 
     rev_delta, rev_tone = _pct_delta_display(variance.get("revenue"), positive_is_good=True)
     cust_delta, cust_tone = _pct_delta_display(variance.get("customers"), positive_is_good=True)
     margin_delta_txt, margin_tone = _margin_delta_display(margin_actual, margin_forecast)
-    roi_delta_txt, roi_tone = _roi_delta_display(record.roi_actual, record.roi_forecast)
+    roi_delta_txt, roi_tone = _roi_delta_display(roi_actual, record.roi_forecast)
 
     vm.metrics = [
         MetricVM(
             "Doanh thu thực tế",
-            vnd(revenue) if revenue is not None else DASH,
+            vnd(revenue),
             rev_delta,
             rev_tone,
             "coins",
@@ -118,7 +137,7 @@ def build_monitor_view_model(record, compared, alerts, action) -> MonitorViewMod
         MetricVM(
             # Dữ liệu thực tế là customers (không có order count) — giữ nhãn đúng nguồn.
             "Khách hàng",
-            integer(customers) if customers is not None else DASH,
+            integer(customers),
             cust_delta,
             cust_tone,
             "cart",
@@ -134,7 +153,7 @@ def build_monitor_view_model(record, compared, alerts, action) -> MonitorViewMod
         ),
         MetricVM(
             "ROI",
-            roi_label(record.roi_actual) if record.roi_actual is not None else DASH,
+            roi_label(roi_actual) if roi_actual is not None else DASH,
             roi_delta_txt,
             roi_tone,
             "trend",
@@ -227,14 +246,14 @@ def _render_view(vm: MonitorViewModel, record, compared) -> None:
     with right:
         _render_alerts_panel(vm)
 
+    # Ngay dưới chart + cảnh báo — luôn hiện, không expander.
+    _render_actuals_editor(record)
+
     b1, b2 = st.columns(2, gap="medium")
     with b1:
         _render_lessons_panel(vm)
     with b2:
         _render_recommendations_panel(vm)
-
-    with st.expander("Nhập / cập nhật số liệu thực tế", expanded=not vm.has_actual):
-        _editor(record)
 
     if compared is not None and st.button("Lưu đánh giá vào nhật ký", key="save_eval"):
         _alerts, action = _evaluate(record)
@@ -287,9 +306,6 @@ def _render_chart_panel(vm: MonitorViewModel, compared) -> None:
 
 
 def _render_alerts_panel(vm: MonitorViewModel) -> None:
-    total = len(vm.alerts)
-    show_all = bool(st.session_state.get("mon_show_all_alerts"))
-    link = f"Xem tất cả ({total}) →" if total > ALERT_VISIBLE and not show_all else ""
     with st.container(border=True):
         show(
             monitor_panel_header(
@@ -297,27 +313,16 @@ def _render_alerts_panel(vm: MonitorViewModel) -> None:
                 "Phát hiện sớm các vấn đề cần chú ý trong chiến dịch.",
                 "bell",
                 "warn",
-                link_text=link,
             )
         )
         if not vm.alerts:
             show(muted("Chưa có cảnh báo từ các luật hiện tại."))
         else:
-            visible = vm.alerts if show_all else vm.alerts[:ALERT_VISIBLE]
             show(
-                '<div class="pp-mon-alert-stack">'
-                + "".join(campaign_alert_card(a.code, a.message, a.level) for a in visible)
-                + "</div>"
+                '<div class="pp-mon-alert-scroll"><div class="pp-mon-alert-stack">'
+                + "".join(campaign_alert_card(a.code, a.message, a.level) for a in vm.alerts)
+                + "</div></div>"
             )
-            if total > ALERT_VISIBLE:
-                if not show_all:
-                    if st.button(f"Xem tất cả ({total}) →", key="mon_alerts_all", type="secondary"):
-                        st.session_state["mon_show_all_alerts"] = True
-                        st.rerun()
-                else:
-                    if st.button("Thu gọn", key="mon_alerts_less", type="secondary"):
-                        st.session_state["mon_show_all_alerts"] = False
-                        st.rerun()
 
 
 def _render_lessons_panel(vm: MonitorViewModel) -> None:
@@ -337,12 +342,6 @@ def _render_lessons_panel(vm: MonitorViewModel) -> None:
             + "".join(learning_item(text, tone) for text, tone in vm.lessons)
             + "</div>"
         )
-        with st.expander("Xem chi tiết →", expanded=False):
-            st.caption(
-                "Nguồn: chênh lệch luỹ kế actual vs baseline dự báo khi launch (không dùng causal claim)."
-            )
-            for text, _tone in vm.lessons:
-                st.write(f"• {text}")
 
 
 def _render_recommendations_panel(vm: MonitorViewModel) -> None:
@@ -358,11 +357,12 @@ def _render_recommendations_panel(vm: MonitorViewModel) -> None:
             show(muted("Chưa đủ tín hiệu để đề xuất hành động có cơ sở."))
         else:
             show("".join(next_action_item(title, desc, ico) for title, desc, ico in vm.next_actions))
-        with st.expander("Xem chi tiết →", expanded=False):
-            if vm.action_label:
-                st.caption(f"Quyết định rule-based: {vm.action_label}")
-            for title, desc, _ico in vm.next_actions:
-                st.write(f"**{title}** — {desc}")
+
+
+def _render_actuals_editor(record) -> None:
+    """Form nhập số thực tế — luôn hiện, ngay dưới chart + cảnh báo."""
+    with st.container(border=True):
+        _editor(record)
 
 
 def _pick(records):
@@ -395,7 +395,180 @@ def _ensure_compared(record):
     return compared
 
 
+ACTUAL_COL_LABELS = {
+    "date": "Ngày",
+    "revenue": "Doanh thu",
+    "gp": "Lợi nhuận gộp",
+    "customers": "Khách hàng",
+    "units": "Sản lượng",
+    "inventory_onhand": "Tồn kho",
+}
+ACTUAL_LABEL_TO_COL = {label: key for key, label in ACTUAL_COL_LABELS.items()}
+ACTUAL_NUM_COLS = ["revenue", "gp", "customers", "units", "inventory_onhand"]
+
+
 def _editor(record) -> None:
+    cid = record.campaign_id
+    rows_key = f"actual_rows_{cid}"
+    ver_key = f"actual_editor_ver_{cid}"
+    cost_fmt_key = f"cost_fmt_{cid}"
+    cost_key = f"cost_num_{cid}"
+
+    if rows_key not in st.session_state:
+        st.session_state[rows_key] = _default_actual_frame(record)
+    if ver_key not in st.session_state:
+        st.session_state[ver_key] = 0
+    if cost_fmt_key not in st.session_state:
+        # Ưu tiên cost đã lưu → chi phí mô phỏng → ngân sách (tránh ROI = — vì cost=0).
+        default_cost = resolve_promo_cost(
+            actual_cost=(record.actual or {}).get("promo_cost_actual"),
+            expected_promo_cost=(record.forecast or {}).get("expected_promo_cost"),
+            budget=(record.forecast or {}).get("budget"),
+            forecast=record.forecast or {},
+        ) or 0.0
+        st.session_state[cost_key] = float(default_cost)
+        st.session_state[cost_fmt_key] = (
+            format_int_commas(int(round(default_cost))) if default_cost else ""
+        )
+
+    export_bytes = _actuals_to_xlsx_bytes(st.session_state[rows_key])
+
+    # Header: tiêu đề trái — nút icon Xuất / Nhập góc phải.
+    head_l, head_r = st.columns([4.2, 1.05], vertical_alignment="top")
+    with head_l:
+        show(
+            monitor_panel_header(
+                "Nhập / cập nhật số liệu thực tế",
+                "Cập nhật kết quả hàng ngày để so với dự báo baseline khi khởi chạy.",
+                "clipboard-check",
+            )
+        )
+    with head_r:
+        st.markdown('<div class="pp-mon-actual-tools">', unsafe_allow_html=True)
+        tool_export, tool_import = st.columns(2, gap="small")
+        with tool_export:
+            st.download_button(
+                label="Xuất",
+                icon=":material/download:",
+                data=export_bytes,
+                file_name=f"so_lieu_thuc_te_{cid}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"export_actual_{cid}",
+                help="Xuất số liệu ra Excel",
+                width="stretch",
+            )
+        with tool_import:
+            with st.popover(
+                "Nhập",
+                icon=":material/upload:",
+                help="Nhập số liệu từ CSV/Excel (thêm vào cuối bảng)",
+                width="stretch",
+            ):
+                st.caption("Thêm vào cuối bảng, không ghi đè. Cột: Ngày, Doanh thu, Lợi nhuận gộp, Khách hàng, Sản lượng, Tồn kho.")
+                uploaded = st.file_uploader(
+                    "Chọn file",
+                    type=["xlsx", "xls", "csv"],
+                    key=f"actual_upload_{cid}",
+                    label_visibility="collapsed",
+                )
+                if uploaded is not None:
+                    _handle_actuals_upload(record, cid, rows_key, ver_key, cost_key, uploaded)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    edited = st.data_editor(
+        st.session_state[rows_key],
+        num_rows="dynamic",
+        width="stretch",
+        key=f"actual_{cid}_{st.session_state[ver_key]}",
+        column_config={
+            "date": st.column_config.DateColumn("Ngày", format="DD/MM/YYYY", required=True),
+            "revenue": st.column_config.NumberColumn("Doanh thu", format="%,.0f", step=1),
+            "gp": st.column_config.NumberColumn("Lợi nhuận gộp", format="%,.0f", step=1),
+            "customers": st.column_config.NumberColumn("Khách hàng", format="%,.0f", step=1),
+            "units": st.column_config.NumberColumn("Sản lượng", format="%,.0f", step=1),
+            "inventory_onhand": st.column_config.NumberColumn("Tồn kho", format="%,.0f", step=1),
+        },
+    )
+    st.session_state[rows_key] = edited
+
+    # Chi phí + Lưu — cùng hàng, kích thước cân đối.
+    cost_col, save_col = st.columns([2.4, 1.0], vertical_alignment="bottom", gap="medium")
+    with cost_col:
+        st.text_input(
+            "Chi phí khuyến mãi thực tế (VND)",
+            key=cost_fmt_key,
+            on_change=_make_sync_cost_fmt(cid),
+            help="Nhập số nguyên; hệ thống tự thêm dấu phẩy phân tách hàng nghìn.",
+        )
+    with save_col:
+        if st.button("Lưu số thực tế", type="primary", key="save_actual", width="stretch"):
+            _pull_cost_from_fmt(cid)
+            cost = float(st.session_state.get(cost_key) or 0)
+            _persist_actuals(
+                record,
+                edited,
+                cost,
+                success_message="Đã lưu và tính lại chênh lệch so với dự báo.",
+            )
+            st.rerun()
+
+
+def _handle_actuals_upload(record, cid: str, rows_key: str, ver_key: str, cost_key: str, uploaded) -> None:
+    upload_token = f"{uploaded.name}:{uploaded.size}"
+    last_token = st.session_state.get(f"actual_upload_token_{cid}")
+    if upload_token == last_token:
+        return
+    try:
+        appended = _parse_actuals_upload(uploaded)
+        if appended.empty:
+            st.warning("File không có dòng hợp lệ (cần cột Ngày).")
+            return
+        current = st.session_state[rows_key].copy()
+        merged = pd.concat([current, appended], ignore_index=True)
+        st.session_state[rows_key] = merged
+        st.session_state[ver_key] = int(st.session_state[ver_key]) + 1
+        st.session_state[f"actual_upload_token_{cid}"] = upload_token
+        cost = float(st.session_state.get(cost_key) or 0)
+        _persist_actuals(
+            record,
+            merged,
+            cost,
+            success_message="Đã nhập và lưu số liệu (thêm vào cuối bảng).",
+        )
+        st.rerun()
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Không đọc được file: {exc}")
+
+def _make_sync_cost_fmt(cid: str):
+    """Callback on_change — được phép ghi lại cost_fmt (widget key)."""
+
+    def _sync() -> None:
+        fmt_key = f"cost_fmt_{cid}"
+        num_key = f"cost_num_{cid}"
+        raw = st.session_state.get(fmt_key)
+        if not str(raw or "").strip():
+            st.session_state[num_key] = 0.0
+            st.session_state[fmt_key] = ""
+            return
+        value = parse_int_commas(raw, default=0, minimum=0)
+        st.session_state[num_key] = float(value)
+        st.session_state[fmt_key] = format_int_commas(value) if value else ""
+
+    return _sync
+
+
+def _pull_cost_from_fmt(cid: str) -> None:
+    """Đọc cost_fmt → cost_num sau khi widget đã tạo (không ghi lại fmt)."""
+    fmt_key = f"cost_fmt_{cid}"
+    num_key = f"cost_num_{cid}"
+    raw = st.session_state.get(fmt_key)
+    if str(raw or "").strip():
+        st.session_state[num_key] = float(parse_int_commas(raw, default=0, minimum=0))
+    else:
+        st.session_state[num_key] = 0.0
+
+
+def _default_actual_frame(record) -> pd.DataFrame:
     default = pd.DataFrame(
         record.actual.get("daily_rows")
         or [
@@ -409,53 +582,138 @@ def _editor(record) -> None:
             }
         ]
     )
-    if "date" in default.columns:
-        default["date"] = pd.to_datetime(default["date"], errors="coerce")
-    edited = st.data_editor(
-        default,
-        num_rows="dynamic",
-        width="stretch",
-        key=f"actual_{record.campaign_id}",
-        column_config={
-            "date": st.column_config.DateColumn("Ngày", required=True),
-            "revenue": st.column_config.NumberColumn("Doanh thu"),
-            "gp": st.column_config.NumberColumn("Lợi nhuận gộp"),
-            "customers": st.column_config.NumberColumn("Khách hàng"),
-            "units": st.column_config.NumberColumn("Sản lượng"),
-            "inventory_onhand": st.column_config.NumberColumn("Tồn kho"),
-        },
+    for col in ["date", *ACTUAL_NUM_COLS]:
+        if col not in default.columns:
+            default[col] = None
+    default = default[["date", *ACTUAL_NUM_COLS]]
+    default["date"] = pd.to_datetime(default["date"], errors="coerce")
+    for col in ACTUAL_NUM_COLS:
+        default[col] = pd.to_numeric(default[col], errors="coerce")
+    return default
+
+
+def _normalize_actual_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    out = frame.copy()
+    if "date" not in out.columns:
+        return pd.DataFrame(columns=["date", *ACTUAL_NUM_COLS])
+    out["date"] = pd.to_datetime(out["date"], errors="coerce", dayfirst=True).dt.normalize()
+    out = out.dropna(subset=["date"])
+    for col in ACTUAL_NUM_COLS:
+        if col not in out.columns:
+            out[col] = None
+        else:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+    return out[["date", *ACTUAL_NUM_COLS]].reset_index(drop=True)
+
+
+def _actuals_display_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """DataFrame xuất file — header tiếng Việt, ngày dd/MM/yyyy."""
+    show = _normalize_actual_frame(frame).copy()
+    if show.empty:
+        return pd.DataFrame(columns=list(ACTUAL_COL_LABELS.values()))
+    show["date"] = show["date"].dt.strftime("%d/%m/%Y")
+    for col in ACTUAL_NUM_COLS:
+        show[col] = show[col].apply(lambda v: None if pd.isna(v) else int(round(float(v))))
+    return show.rename(columns=ACTUAL_COL_LABELS)
+
+
+def _actuals_to_xlsx_bytes(frame: pd.DataFrame) -> bytes:
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        _actuals_display_frame(frame).to_excel(writer, sheet_name="So lieu thuc te", index=False)
+    return buffer.getvalue()
+
+
+def _parse_actuals_upload(uploaded) -> pd.DataFrame:
+    name = (uploaded.name or "").lower()
+    if name.endswith(".csv"):
+        raw = pd.read_csv(uploaded)
+    else:
+        raw = pd.read_excel(uploaded)
+    rename = {}
+    for col in raw.columns:
+        label = str(col).strip()
+        if label in ACTUAL_LABEL_TO_COL:
+            rename[col] = ACTUAL_LABEL_TO_COL[label]
+        elif label.lower() in ACTUAL_COL_LABELS:
+            rename[col] = label.lower()
+        elif label.lower() in {"inventory", "ton kho", "tồn kho"}:
+            rename[col] = "inventory_onhand"
+        elif label.lower() in {"gross_profit", "loi nhuan gop", "lợi nhuận gộp"}:
+            rename[col] = "gp"
+    mapped = raw.rename(columns=rename)
+    # Parse số kiểu "25,300,024"
+    for col in ACTUAL_NUM_COLS:
+        if col in mapped.columns and mapped[col].dtype == object:
+            mapped[col] = (
+                mapped[col]
+                .astype(str)
+                .str.replace(",", "", regex=False)
+                .str.replace(" ", "", regex=False)
+            )
+    return _normalize_actual_frame(mapped)
+
+
+def _persist_actuals(record, frame: pd.DataFrame, cost: float, *, success_message: str) -> None:
+    normalized = _normalize_actual_frame(frame)
+    if normalized.empty:
+        st.warning("Không có dòng nào có ngày hợp lệ để lưu.")
+        return
+    baseline = _baseline(record)
+    compared = compare_actual_vs_forecast(normalized, baseline)
+    record.variance = {
+        "revenue": cumulative_variance(compared, "revenue"),
+        "gp": cumulative_variance(compared, "gp"),
+        "customers": cumulative_variance(compared, "customers"),
+        "units": cumulative_variance(compared, "units"),
+    }
+    resolved_cost = resolve_promo_cost(
+        actual_cost=cost,
+        expected_promo_cost=(record.forecast or {}).get("expected_promo_cost"),
+        budget=(record.forecast or {}).get("budget"),
+        forecast=record.forecast or {},
     )
-    cost = st.number_input(
-        "Chi phí khuyến mãi thực tế (đ)",
-        min_value=0.0,
-        value=float(record.actual.get("promo_cost_actual") or 0),
-        step=100000.0,
-        key=f"cost_{record.campaign_id}",
-    )
-    if st.button("Lưu số thực tế", type="primary", key="save_actual"):
-        frame = edited.dropna(subset=["date"]).copy()
-        frame["date"] = pd.to_datetime(frame["date"])
-        for col in ["revenue", "gp", "customers", "units", "inventory_onhand"]:
-            if col in frame.columns:
-                frame[col] = pd.to_numeric(frame[col], errors="coerce")
-        baseline = _baseline(record)
-        compared = compare_actual_vs_forecast(frame, baseline)
-        record.variance = {
-            "revenue": cumulative_variance(compared, "revenue"),
-            "gp": cumulative_variance(compared, "gp"),
-            "customers": cumulative_variance(compared, "customers"),
-            "units": cumulative_variance(compared, "units"),
-        }
-        record.roi_actual = _roi(frame, record, cost)
-        safe = frame.copy()
-        safe["date"] = safe["date"].dt.strftime("%Y-%m-%d")
-        record.actual = {
-            "daily_rows": safe.where(pd.notna(safe), None).to_dict("records"),
-            "promo_cost_actual": cost,
-        }
-        save_campaign_record(record)
-        st.success("Đã lưu và tính lại chênh lệch so với dự báo.")
-        st.rerun()
+    # Lưu cost người nhập nếu > 0; nếu không vẫn giữ fallback để ROI tính được.
+    stored_cost = float(cost) if cost and float(cost) > 0 else (resolved_cost or 0.0)
+    record.roi_actual = _roi(normalized, record, resolved_cost)
+    safe = normalized.copy()
+    safe["date"] = safe["date"].dt.strftime("%Y-%m-%d")
+    # where(...None).to_dict vẫn giữ float('nan') — phải làm sạch tường minh.
+    record.actual = {
+        "daily_rows": _records_without_nan(safe),
+        "promo_cost_actual": float(stored_cost or 0),
+    }
+    cid = record.campaign_id
+    st.session_state[f"actual_rows_{cid}"] = normalized
+    save_campaign_record(record)
+    st.session_state["campaign_actual_data"] = compared
+    st.success(success_message)
+
+
+def _records_without_nan(frame: pd.DataFrame) -> list[dict]:
+    """to_dict('records') an toàn — NaN/NA → None (tránh sum bị nhiễm nan)."""
+    import math
+
+    rows: list[dict] = []
+    for raw in frame.to_dict(orient="records"):
+        cleaned: dict = {}
+        for key, value in raw.items():
+            if value is None:
+                cleaned[key] = None
+                continue
+            try:
+                if pd.isna(value):
+                    cleaned[key] = None
+                    continue
+            except (TypeError, ValueError):
+                pass
+            if isinstance(value, (float, int)) and not isinstance(value, bool):
+                number = float(value)
+                cleaned[key] = number if math.isfinite(number) else None
+            else:
+                cleaned[key] = value
+        rows.append(cleaned)
+    return rows
 
 
 def _baseline(record):
@@ -469,11 +727,37 @@ def _baseline(record):
 
 
 def _roi(frame, record, cost):
-    no_promo = record.forecast.get("no_promo_gp_per_day")
-    if cost and no_promo is not None and "gp" in frame.columns and frame["gp"].notna().any():
-        incremental = float(frame["gp"].sum()) - no_promo * len(frame)
-        return incremental / cost
-    return None
+    """ROI thực tế — cost đã resolve (thực tế / mô phỏng / ngân sách)."""
+    no_promo = (record.forecast or {}).get("no_promo_gp_per_day")
+    if "gp" not in getattr(frame, "columns", []):
+        return None
+    return compute_actual_roi(
+        frame["gp"],
+        no_promo_gp_per_day=no_promo,
+        promo_cost=cost,
+    )
+
+
+def _roi_from_record(record, compared) -> float | None:
+    """Tính ROI từ số đã lưu + fallback chi phí (dùng khi render KPI)."""
+    cost = resolve_promo_cost(
+        actual_cost=(record.actual or {}).get("promo_cost_actual"),
+        expected_promo_cost=(record.forecast or {}).get("expected_promo_cost"),
+        budget=(record.forecast or {}).get("budget"),
+        forecast=record.forecast or {},
+    )
+    no_promo = (record.forecast or {}).get("no_promo_gp_per_day")
+    if compared is not None and not getattr(compared, "empty", True) and "gp" in compared.columns:
+        return compute_actual_roi(
+            compared["gp"],
+            no_promo_gp_per_day=no_promo,
+            promo_cost=cost,
+        )
+    rows = (record.actual or {}).get("daily_rows") or []
+    if not rows:
+        return record.roi_actual
+    gps = [row.get("gp") for row in rows if isinstance(row, dict)]
+    return compute_actual_roi(gps, no_promo_gp_per_day=no_promo, promo_cost=cost)
 
 
 def _evaluate(record):
@@ -490,8 +774,8 @@ def _evaluate(record):
     days_of_inventory = (
         (latest_inventory / avg_daily_units) if latest_inventory is not None and avg_daily_units else None
     )
-    total_gp = sum((row.get("gp") or 0) for row in daily_rows)
-    total_revenue = sum((row.get("revenue") or 0) for row in daily_rows)
+    total_gp = _sum_field(daily_rows, "gp") or 0.0
+    total_revenue = _sum_field(daily_rows, "revenue") or 0.0
     margin = total_gp / total_revenue if total_revenue else None
     recommended = st.session_state.get("last_recommendation_card")
     ratio = (
@@ -522,12 +806,49 @@ def _evaluate(record):
 
 
 def _sum_field(rows: list, field_name: str) -> float | None:
+    """Cộng các giá trị hữu hạn; bỏ None/NaN/chuỗi lỗi (tránh sum → nan → KPI hiện —)."""
+    import math
+
     if not rows:
         return None
-    values = [row.get(field_name) for row in rows if row.get(field_name) is not None]
-    if not values:
+    total = 0.0
+    found = False
+    for row in rows:
+        raw = row.get(field_name) if isinstance(row, dict) else None
+        if raw is None:
+            continue
+        try:
+            if pd.isna(raw):
+                continue
+        except (TypeError, ValueError):
+            pass
+        try:
+            number = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(number):
+            continue
+        total += number
+        found = True
+    return total if found else None
+
+
+def _sum_series(series) -> float | None:
+    import math
+
+    if series is None:
         return None
-    return float(sum(values))
+    total = pd.to_numeric(series, errors="coerce").sum(skipna=True)
+    try:
+        number = float(total)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    # sum toàn NaN → 0.0 với skipna; phân biệt bằng any notna
+    if pd.to_numeric(series, errors="coerce").notna().sum() == 0:
+        return None
+    return number
 
 
 def _forecast_margin(record) -> float | None:

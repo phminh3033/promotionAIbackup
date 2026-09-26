@@ -436,26 +436,37 @@ def simulation_scenario_card(
     recommended: bool = False,
     rejected: bool = False,
     badges_html: str = "",
+    href: str | None = None,
 ) -> str:
     klass = "pp-sim-card"
     if selected:
         klass += " is-selected"
     if rejected:
         klass += " is-rejected"
+    if href and not rejected:
+        klass += " is-clickable"
     flags = ""
     if recommended:
         flags += badge("Được mô hình đề xuất", "purple")
     if rejected:
         flags += badge("Không khả thi", "bad")
+    if selected:
+        flags += badge("Đang chọn", "ok")
     if badges_html:
         flags += badges_html
     flag_row = f'<div class="pp-sim-flags">{flags}</div>' if flags else ""
     desc = f'<p class="pp-sim-desc">{esc(description)}</p>' if description else ""
-    return f"""
+    if rejected:
+        foot = '<div class="pp-sim-card-foot muted">Không thể chọn — vi phạm ràng buộc.</div>'
+    elif selected:
+        foot = '<div class="pp-sim-card-foot selected">✓ Phương án này sẽ dùng cho Decide</div>'
+    else:
+        foot = '<div class="pp-sim-card-foot">Nhấn vào card để chọn phương án này</div>'
+    body = f"""
 <div class="{klass}">
   <div class="pp-sim-card-head">
     <div class="pp-sim-card-ico">{icon(icon_name, 18)}</div>
-    <div>
+    <div class="pp-sim-card-head-text">
       <div class="pp-sim-letter">Phương án {esc(letter)}</div>
       <div class="pp-sim-card-title">{esc(title)}</div>
       <div class="pp-sim-card-sub">{esc(subtitle)}</div>
@@ -464,8 +475,12 @@ def simulation_scenario_card(
   {desc}
   {flag_row}
   <div class="pp-sim-metrics">{metrics_html}</div>
+  {foot}
 </div>
 """
+    if href and not rejected:
+        return f'<a class="pp-sim-card-link" href="{esc(href)}">{body}</a>'
+    return body
 
 
 def recommendation_hero(
@@ -477,7 +492,14 @@ def recommendation_hero(
     status_sub: str = "",
     is_recommended: bool = True,
 ) -> str:
-    status_sub_html = f'<div class="pp-dec-hero-status-sub">{esc(status_sub)}</div>' if status_sub else ""
+    status_block = ""
+    if status_label:
+        status_sub_html = f'<div class="pp-dec-hero-status-sub">{esc(status_sub)}</div>' if status_sub else ""
+        status_block = f"""
+    <div class="pp-dec-hero-status">
+      <div class="pp-dec-hero-status-title">{icon("check", 14)}<span>{esc(status_label)}</span></div>
+      {status_sub_html}
+    </div>"""
     badge_top = (
         f'<div class="pp-dec-hero-badge">{icon("trophy", 14)}<span>Phương án đề xuất</span></div>'
         if is_recommended
@@ -487,10 +509,7 @@ def recommendation_hero(
 <div class="pp-dec-hero">
   <div class="pp-dec-hero-top">
     {badge_top}
-    <div class="pp-dec-hero-status">
-      <div class="pp-dec-hero-status-title">{icon("check", 14)}<span>{esc(status_label)}</span></div>
-      {status_sub_html}
-    </div>
+    {status_block}
   </div>
   <div class="pp-dec-hero-body">
     <div class="pp-dec-hero-ico">{icon(icon_name, 28)}</div>
@@ -754,7 +773,8 @@ STATUS_BADGE_ICON = {
 }
 
 
-def exec_panel_header(title: str, subtitle: str, icon_name: str = "rocket", ico_class: str = "") -> str:
+def exec_panel_header(title: str, subtitle: str, icon_name: str = "rocket", ico_class: str = "is-blue") -> str:
+    """Header panel Execute — icon xanh đồng bộ section header hệ thống (.pp-sec-ico)."""
     klass = f"pp-exec-panel-ico {ico_class}".strip()
     return f"""
 <div class="pp-exec-panel-head">
@@ -767,7 +787,7 @@ def exec_panel_header(title: str, subtitle: str, icon_name: str = "rocket", ico_
 """
 
 
-def campaign_info_field(label: str, value: str, sub: str = "", icon_name: str = "info", accent: str = "purple") -> str:
+def campaign_info_field(label: str, value: str, sub: str = "", icon_name: str = "info", accent: str = "blue") -> str:
     """3 cột: icon | label | nội dung chi tiết (value + sub) — theo template Execute."""
     sub_html = f'<div class="pp-exec-field-sub">{esc(sub)}</div>' if sub else ""
     return f"""
@@ -784,8 +804,8 @@ def campaign_info_field(label: str, value: str, sub: str = "", icon_name: str = 
 
 def campaign_info_card(fields_html: str, title: str = "Thông tin chiến dịch", subtitle: str = "Tóm tắt các thông tin chính của chiến dịch") -> str:
     return f"""
-<div class="pp-exec-panel">
-  {exec_panel_header(title, subtitle, "rocket")}
+<div class="pp-exec-panel pp-card">
+  {exec_panel_header(title, subtitle, "rocket", "is-blue")}
   <div class="pp-exec-fields">{fields_html}</div>
 </div>
 """
@@ -815,6 +835,27 @@ def task_name_cell(name: str, icon_name: str = "clipboard-check", is_new: bool =
     return f'<span class="pp-exec-task-cell"><span>{esc(name or "—")}{badge_html}</span></span>'
 
 
+def task_list_card(
+    rows_html: str,
+    title: str = "Danh sách công việc thực thi",
+    subtitle: str = "Các đầu việc cần hoàn thành để triển khai chiến dịch",
+    empty_html: str = "",
+) -> str:
+    """Bảng công việc read-only — cùng chrome pp-exec-panel / pp-card với card khác."""
+    body = empty_html if empty_html else (
+        '<div class="pp-exec-table-scroll">'
+        '<div class="pp-exec-grid-head is-readonly">'
+        "<div>#</div><div>Công việc</div><div>Phụ trách</div>"
+        "<div>Hạn hoàn thành</div><div>Trạng thái</div>"
+        f"</div>{rows_html}</div>"
+    )
+    return f"""
+<div class="pp-exec-panel pp-card">
+  {exec_panel_header(title, subtitle, "clipboard-check", "is-blue")}
+  {body}
+</div>
+"""
+
 def campaign_readiness_card(
     completed: int,
     total: int,
@@ -832,7 +873,7 @@ def campaign_readiness_card(
     count_label = f"{completed}/{total} hoàn thành" if total else EMPTY
     banner = info_banner("Gợi ý", message, "info") if message else ""
     return f"""
-<div class="pp-exec-panel">
+<div class="pp-exec-panel pp-card">
   {exec_panel_header(title, subtitle, "gauge", "is-blue")}
   <div class="pp-exec-ready-top">
     <div class="pp-exec-ready-count">{esc(count_label)}</div>
@@ -848,17 +889,13 @@ def campaign_readiness_card(
 
 def prelaunch_checklist_card(
     items: list[dict],
-    visible_count: int = 6,
     title: str = "Checklist trước khi khởi động",
     subtitle: str = "Các hạng mục bắt buộc cần hoàn tất",
-    show_all: bool = False,
 ) -> str:
-    """items: [{label, checked}] — derived readiness, hiển thị read-only."""
-    total = len(items)
-    visible = items if show_all else items[:visible_count]
-    if visible:
+    """items: [{label, checked}] — bản HTML tĩnh (vd. empty state). Checklist tương tác ở Execute dùng Streamlit checkbox."""
+    if items:
         cells = []
-        for item in visible:
+        for item in items:
             on = bool(item.get("checked"))
             box_class = "pp-exec-check-box is-on" if on else "pp-exec-check-box"
             label_class = "pp-exec-check-label is-on" if on else "pp-exec-check-label"
@@ -868,18 +905,12 @@ def prelaunch_checklist_card(
                 f'<div class="{box_class}">{mark}</div>'
                 f'<div class="{label_class}">{esc(item.get("label") or DASH)}</div></div>'
             )
-        body = f'<div class="pp-exec-check-grid">{"".join(cells)}</div>'
+        body = f'<div class="pp-exec-check-scroll"><div class="pp-exec-check-grid">{"".join(cells)}</div></div>'
     else:
         body = muted(EMPTY)
-    see_all = ""
-    if total > visible_count and not show_all:
-        see_all = f'<div class="pp-exec-see-all">Xem tất cả ({total}) →</div>'
     return f"""
-<div class="pp-exec-panel">
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
-    {exec_panel_header(title, subtitle, "clipboard-check")}
-    {see_all}
-  </div>
+<div class="pp-exec-panel pp-card">
+  {exec_panel_header(title, subtitle, "clipboard-check", "is-blue")}
   {body}
 </div>
 """

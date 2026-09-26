@@ -21,7 +21,7 @@ from ui.components import (
     simulation_scenario_card,
     simulation_setup_header,
 )
-from ui.formatters import compact_vnd, integer, pct, roi_label, signed_pct
+from ui.formatters import compact_vnd, format_int_commas, integer, parse_int_commas, roi_label, signed_pct
 from ui.shell import continue_button, render_shell
 
 RISK_KIND = {"Thấp": "ok", "Trung bình": "warn", "Cao": "bad"}
@@ -42,6 +42,11 @@ MECHANIC_ICON = {
 
 
 def render() -> None:
+    # Trước shell: nếu vừa vào lại từ Decide/trang khác → khớp widget với kết quả mô phỏng đã lưu.
+    prev_page = st.session_state.get("_pp_active_page")
+    if prev_page != "simulate":
+        _align_controls_from_last_simulation()
+
     render_shell("Simulate", "So sánh các phương án promotion và ước tính tác động.", stage=4)
     from src.utils.state import has_data
 
@@ -56,6 +61,12 @@ def render() -> None:
             if scope_value is None:
                 st.error("Hãy chọn sản phẩm hoặc danh mục.")
             else:
+                # Chỉ đọc ô text → số; không ghi lại *_fmt (widget đã instantiate).
+                _pull_sim_money_from_fmt()
+                gift_cost = float(st.session_state.get("sim_gift") or 0)
+                st.session_state["business_profile"].promotion_budget = float(
+                    st.session_state.get("sim_budget") or 0
+                )
                 with st.spinner("Đang mô phỏng các cơ chế khuyến mãi..."):
                     ok, message = run_simulation(scope, scope_value, promo_days, gift_cost)
                 (st.success if ok else st.error)(message)
@@ -74,13 +85,14 @@ def render() -> None:
                 )
             )
         elif meta.get("scope_value") != scope_value:
-            st.info("Bộ kết quả đang lưu thuộc lựa chọn khác. Chạy lại mô phỏng cho lựa chọn hiện tại.")
-            show(
-                simulation_empty_state(
-                    "Kết quả không khớp phạm vi",
-                    "Phạm vi sản phẩm/danh mục đã đổi — hãy chạy lại mô phỏng.",
-                )
+            # Fallback: vẫn hiện kết quả đã lưu nếu meta còn — tránh mất board khi widget lệch tạm thời.
+            st.info(
+                f"Đang hiện kết quả mô phỏng cho «{meta.get('scope_value')}». "
+                "Phạm vi bên trái khác kết quả — chạy lại mô phỏng nếu muốn cập nhật."
             )
+            ready = True
+            views = _display_views(table, profile, meta)
+            _scenario_board(views)
         else:
             ready = True
             st.caption(
@@ -92,10 +104,60 @@ def render() -> None:
 
     if ready and views:
         _comparison(views)
-        with st.expander("Bảng đủ mọi kịch bản đã tính"):
-            st.dataframe(_display_table(table), width="stretch", hide_index=True)
 
     _actions(ready=ready, views=views)
+
+
+def _align_controls_from_last_simulation() -> None:
+    """Khôi phục tham số Simulate + giữ selected_mechanic khi quay lại từ Decide/trang khác.
+
+    Widget Streamlit có thể mất/khác mặc định sau switch_page → lệch scope_value so với
+    last_scenario_meta và làm board trông như «mất» kết quả. Hàm này khớp lại UI với meta
+    đã lưu khi bấm «Chạy mô phỏng» (kể cả ngày bắt đầu/kết thúc và ngân sách thật).
+    """
+    from src.promotion.sim_setup import budget_from_meta, campaign_window_from_meta
+
+    drafts = dict(st.session_state.get("ui_control_drafts") or {})
+    for key, value in drafts.items():
+        if str(key).startswith("sim_") and key not in st.session_state:
+            st.session_state[key] = value
+    if not st.session_state.get("selected_mechanic") and drafts.get("selected_mechanic"):
+        st.session_state["selected_mechanic"] = drafts["selected_mechanic"]
+
+    meta = st.session_state.get("last_scenario_meta")
+    if not isinstance(meta, dict) or not meta.get("scope_value"):
+        return
+    if st.session_state.get("last_scenario_table") is None:
+        return
+
+    scope = meta.get("scope") or "Một SKU cụ thể"
+    st.session_state["sim_scope"] = scope
+    if scope == "Một Danh mục":
+        st.session_state["sim_cat"] = meta["scope_value"]
+    else:
+        st.session_state["sim_sku"] = meta["scope_value"]
+
+    start, end, _days = campaign_window_from_meta(meta)
+    st.session_state["sim_period"] = (start, end)
+
+    profile = st.session_state.get("business_profile")
+    fallback_budget = float(getattr(profile, "promotion_budget", 0) or 0) if profile is not None else 0.0
+    budget = budget_from_meta(meta, fallback=fallback_budget)
+    st.session_state["sim_budget"] = float(budget)
+    st.session_state["sim_budget_fmt"] = format_int_commas(int(round(budget))) if budget else ""
+
+    if meta.get("max_discount_pct") is not None:
+        st.session_state["sim_max_disc"] = float(meta["max_discount_pct"])
+    if meta.get("min_margin_pct") is not None:
+        st.session_state["sim_min_margin"] = float(meta["min_margin_pct"])
+
+    gift = meta.get("gift_cost_per_unit")
+    if gift is not None:
+        gift_i = max(0, int(round(float(gift))))
+        st.session_state["sim_gift"] = gift_i
+        st.session_state["sim_gift_fmt"] = format_int_commas(gift_i) if gift_i else ""
+
+    # selected_mechanic giữ nguyên trong session — không đụng ở đây.
 
 def _empty_simulation() -> None:
     setup, board = st.columns([0.95, 2.4], gap="medium")
@@ -157,6 +219,7 @@ def _control_fields():
         "Thời gian chiến dịch",
         value=(date.today(), date.today() + timedelta(days=6)),
         key="sim_period",
+        format="DD/MM/YYYY",
     )
     if isinstance(period, (list, tuple)) and len(period) == 2:
         start, end = period[0], period[1]
@@ -166,14 +229,15 @@ def _control_fields():
     promo_days = max(1, min(30, (end - start).days + 1))
     st.caption(f"{start.strftime('%d/%m/%Y')} – {end.strftime('%d/%m/%Y')} · {promo_days} ngày đưa vào mô hình.")
 
-    budget = st.number_input(
+    _ensure_sim_money_widgets(profile)
+    st.text_input(
         "Ngân sách tối đa (đ)",
-        min_value=0.0,
-        value=float(profile.promotion_budget),
-        step=1_000_000.0,
-        key="sim_budget",
+        key="sim_budget_fmt",
+        on_change=_sync_sim_budget,
+        help="Nhập số nguyên; hệ thống tự thêm dấu phẩy phân tách hàng nghìn.",
     )
-    profile.promotion_budget = float(budget)
+    budget = float(st.session_state.get("sim_budget") or 0)
+    profile.promotion_budget = budget
 
     max_discount = st.number_input(
         "Giảm giá tối đa",
@@ -198,18 +262,77 @@ def _control_fields():
     profile.max_discount_pct = float(max_discount)
     profile.min_margin_pct = float(min_margin)
 
-    gift_cost = st.number_input(
+    st.text_input(
         "Giá trị quà tặng / đơn vị (đ)",
-        min_value=0,
-        value=5000,
-        step=1000,
-        key="sim_gift",
+        key="sim_gift_fmt",
+        on_change=_sync_sim_gift,
+        help="Nhập số nguyên; hệ thống tự thêm dấu phẩy phân tách hàng nghìn.",
     )
+    gift_cost = float(st.session_state.get("sim_gift") or 0)
     st.caption(
         f"Ngân sách hồ sơ: {compact_vnd(profile.promotion_budget)}. "
         "Vượt ngân sách được gắn cờ, không tự loại kịch bản."
     )
-    return scope, scope_value, promo_days, float(gift_cost)
+    return scope, scope_value, promo_days, gift_cost
+
+
+def _ensure_sim_money_widgets(profile) -> None:
+    """Khởi tạo / migrate ô ngân sách & quà tặng sang dạng text có dấu phẩy."""
+    if "sim_budget_fmt" not in st.session_state:
+        raw = st.session_state.get("sim_budget", profile.promotion_budget)
+        try:
+            budget = max(0, int(round(float(raw or 0))))
+        except (TypeError, ValueError):
+            budget = max(0, int(round(float(profile.promotion_budget or 0))))
+        st.session_state["sim_budget"] = float(budget)
+        st.session_state["sim_budget_fmt"] = format_int_commas(budget) if budget else ""
+    if "sim_gift_fmt" not in st.session_state:
+        raw = st.session_state.get("sim_gift", 5000)
+        try:
+            gift = max(0, int(round(float(raw or 0))))
+        except (TypeError, ValueError):
+            gift = 5000
+        st.session_state["sim_gift"] = gift
+        st.session_state["sim_gift_fmt"] = format_int_commas(gift) if gift else ""
+
+
+def _sync_sim_budget() -> None:
+    """on_change của ô ngân sách — được phép ghi lại sim_budget_fmt (callback)."""
+    raw = st.session_state.get("sim_budget_fmt")
+    if not str(raw or "").strip():
+        st.session_state["sim_budget"] = 0.0
+        st.session_state["sim_budget_fmt"] = ""
+        return
+    value = parse_int_commas(raw, default=0, minimum=0)
+    st.session_state["sim_budget"] = float(value)
+    st.session_state["sim_budget_fmt"] = format_int_commas(value) if value else ""
+
+
+def _sync_sim_gift() -> None:
+    """on_change của ô quà tặng — được phép ghi lại sim_gift_fmt (callback)."""
+    raw = st.session_state.get("sim_gift_fmt")
+    if not str(raw or "").strip():
+        st.session_state["sim_gift"] = 0
+        st.session_state["sim_gift_fmt"] = ""
+        return
+    value = parse_int_commas(raw, default=0, minimum=0)
+    st.session_state["sim_gift"] = value
+    st.session_state["sim_gift_fmt"] = format_int_commas(value) if value else ""
+
+
+def _pull_sim_money_from_fmt() -> None:
+    """Đọc sim_*_fmt → sim_budget / sim_gift sau khi widget đã tạo (không ghi lại *_fmt)."""
+    raw_budget = st.session_state.get("sim_budget_fmt")
+    if str(raw_budget or "").strip():
+        st.session_state["sim_budget"] = float(parse_int_commas(raw_budget, default=0, minimum=0))
+    else:
+        st.session_state["sim_budget"] = 0.0
+
+    raw_gift = st.session_state.get("sim_gift_fmt")
+    if str(raw_gift or "").strip():
+        st.session_state["sim_gift"] = parse_int_commas(raw_gift, default=0, minimum=0)
+    else:
+        st.session_state["sim_gift"] = 0
 
 
 def _display_views(table: pd.DataFrame, profile, meta) -> list[dict]:
@@ -219,12 +342,12 @@ def _display_views(table: pd.DataFrame, profile, meta) -> list[dict]:
     rejected = [v for v in views if v["rejected"]]
     # Ưu tiên kịch bản hợp lệ; vẫn generic theo số lượng backend trả.
     ordered = feasible + rejected
-    # Gắn letter + recommended (điểm mục tiêu cao nhất trong nhóm hợp lệ)
     best_mech = feasible[0]["mechanic"] if feasible else None
     out = []
-    for idx, view in enumerate(ordered[:6]):
+    for idx, view in enumerate(ordered):
         item = dict(view)
         item["letter"] = LETTER[idx] if idx < len(LETTER) else str(idx + 1)
+        item["card_idx"] = idx
         item["recommended"] = bool(best_mech and view["mechanic"] == best_mech and not view["rejected"])
         item["icon"] = MECHANIC_ICON.get(view["mechanic"], "flask")
         item["subtitle"] = MECHANIC_LABELS_VI.get(view["mechanic"], view["label"])
@@ -232,20 +355,110 @@ def _display_views(table: pd.DataFrame, profile, meta) -> list[dict]:
     return out
 
 
+def _apply_sim_pick_from_query(valid_mechanics: set[str]) -> None:
+    """Card click dùng ?sim_pick=mechanic — chỉ nhận đúng 1 phương án hợp lệ."""
+    raw = st.query_params.get("sim_pick")
+    if not raw:
+        return
+    pick = raw[0] if isinstance(raw, (list, tuple)) else str(raw)
+    try:
+        del st.query_params["sim_pick"]
+    except Exception:
+        st.query_params.pop("sim_pick", None)
+    if pick in valid_mechanics:
+        st.session_state["selected_mechanic"] = pick
+        st.session_state["last_recommendation_card"] = None
+        st.session_state.pop("last_campaign_plan", None)
+        st.session_state.pop("last_execution_plan", None)
+    st.rerun()
+
+
+def _sim_pick_href(mechanic: str) -> str:
+    """Giữ các query param hiện có (vd workspace id), chỉ ghi đè sim_pick."""
+    from urllib.parse import urlencode
+
+    params: dict[str, str] = {}
+    for key in st.query_params:
+        val = st.query_params.get(key)
+        if val is None or key == "sim_pick":
+            continue
+        params[key] = val[0] if isinstance(val, (list, tuple)) else str(val)
+    params["sim_pick"] = mechanic
+    return "?" + urlencode(params)
+
+
+def _layout_rows(n: int) -> list[int]:
+    """Số card mỗi hàng — cân đối theo tổng số phương án."""
+    if n <= 0:
+        return []
+    if n <= 3:
+        return [n]
+    if n == 4:
+        return [2, 2]
+    if n == 5:
+        return [3, 2]
+    if n == 6:
+        return [3, 3]
+    rows: list[int] = []
+    left = n
+    while left > 0:
+        if left == 4:
+            rows.extend([2, 2])
+            break
+        take = min(3, left)
+        rows.append(take)
+        left -= take
+    return rows
+
+
 def _scenario_board(views: list[dict]) -> None:
     if not views:
-        st.warning("Không có kịch bản khuyến mãi hợp lệ.")
+        st.warning("Không có kịch bản khuyến mãi từ hồ sơ / dữ liệu lịch sử. Kiểm tra cơ chế được phép trong Hồ sơ doanh nghiệp.")
         return
+
+    selectable = {v["mechanic"] for v in views if not v["rejected"]}
+    _apply_sim_pick_from_query(selectable)
+
     selected = st.session_state.get("selected_mechanic")
-    cols = st.columns(min(3, len(views)), gap="medium")
-    for col, view in zip(cols, views[:3]):
-        with col:
-            _one_card(view, selected)
-    if len(views) > 3:
-        cols2 = st.columns(min(3, len(views) - 3), gap="medium")
-        for col, view in zip(cols2, views[3:]):
+    # Nếu phương án cũ không còn trong kết quả mô phỏng hiện tại → bỏ chọn.
+    if selected and selected not in {v["mechanic"] for v in views}:
+        st.session_state["selected_mechanic"] = None
+        selected = None
+    if selected and selected not in selectable:
+        st.session_state["selected_mechanic"] = None
+        selected = None
+
+    st.caption(
+        f"{len(views)} phương án từ mô phỏng (hồ sơ + lịch sử + ngưỡng depth). "
+        "Nhấn vào một card để chọn — chỉ phương án đó đi tiếp sang Decide."
+    )
+
+    rows = _layout_rows(len(views))
+    cursor = 0
+    row_cap = max(rows) if rows else 3
+    for count in rows:
+        chunk = views[cursor : cursor + count]
+        cursor += count
+        _render_card_row(chunk, selected, row_cap=row_cap)
+
+
+def _render_card_row(chunk: list[dict], selected, *, row_cap: int) -> None:
+    """Hàng card cùng chiều cao cột; hàng lẻ được căn giữa."""
+    n = len(chunk)
+    if n <= 0:
+        return
+    if n == row_cap:
+        cols = st.columns(n, gap="medium")
+        for col, view in zip(cols, chunk):
             with col:
                 _one_card(view, selected)
+        return
+    # Căn giữa: spacer | cards | spacer
+    layout = [1] + [2] * n + [1]
+    cols = st.columns(layout, gap="medium")
+    for i, view in enumerate(chunk):
+        with cols[i + 1]:
+            _one_card(view, selected)
 
 
 def _one_card(view: dict, selected) -> None:
@@ -255,7 +468,6 @@ def _one_card(view: dict, selected) -> None:
     rev = signed_pct(view["revenue_lift"]) if view["revenue_lift"] is not None else DASH
     profit = signed_pct(view["profit_lift"]) if view["profit_lift"] is not None else DASH
     roi = roi_label(view["roi"]) if view["roi"] is not None else DASH
-    # Inventory need = sản lượng kịch bản (đơn vị), kèm gap nếu có tồn kho — không fake %.
     units = integer(view["units"])
     if view["inventory_gap"] is None:
         inv_html = f"{esc(units)} đơn vị"
@@ -277,6 +489,7 @@ def _one_card(view: dict, selected) -> None:
             scenario_metric_row("shield-check", "Confidence", conf_html),
         ]
     )
+    href = None if view["rejected"] else _sim_pick_href(view["mechanic"])
     show(
         simulation_scenario_card(
             letter=view["letter"],
@@ -288,32 +501,9 @@ def _one_card(view: dict, selected) -> None:
             selected=is_selected,
             recommended=view.get("recommended", False),
             rejected=view["rejected"],
+            href=href,
         )
     )
-    if view["rejected"]:
-        st.caption("Business rules đã loại kịch bản này.")
-        st.button("Không thể chọn", key=f"pick_{view['mechanic']}", width="stretch", disabled=True)
-    elif is_selected:
-        if st.button("Đã chọn ✓", key=f"pick_{view['mechanic']}", width="stretch", type="primary"):
-            pass
-    else:
-        if st.button("Chọn →", key=f"pick_{view['mechanic']}", width="stretch"):
-            st.session_state["selected_mechanic"] = view["mechanic"]
-            st.rerun()
-    with st.expander("Xem chi tiết →", expanded=False):
-        st.write(
-            {
-                "Cơ chế": view["mechanic"],
-                "Doanh thu": view["revenue"],
-                "Lợi nhuận gộp": view["profit"],
-                "ROI": view["roi"],
-                "Sản lượng": view["units"],
-                "Revenue lift": view["revenue_lift"],
-                "Profit lift": view["profit_lift"],
-                "Rủi ro": view["risk"],
-                "Bị loại": view["rejected"],
-            }
-        )
 
 
 def _short_desc(view: dict) -> str:
@@ -335,8 +525,8 @@ def _confidence_html(confidence) -> str:
 
 
 def _comparison(views: list[dict]) -> None:
-    """Chỉ chart các metric % cùng đơn vị; ROI (x) và inventory (đơn vị) tách riêng."""
-    chartable = [v for v in views if not v["rejected"]][:4]
+    """Biểu đồ doanh thu/lợi nhuận cho mọi phương án hợp lệ sau mô phỏng."""
+    chartable = [v for v in views if not v["rejected"]]
     if len(chartable) < 1:
         return
     with st.container(border=True):
@@ -347,36 +537,14 @@ def _comparison(views: list[dict]) -> None:
                 "chart-column",
             )
         )
-        if len(chartable) >= 2:
-            fig = grouped_bars(
-                ["Doanh thu tăng", "Lợi nhuận tăng"],
-                [(v["label"], [v["revenue_lift"] or 0, v["profit_lift"] or 0]) for v in chartable],
-                "So với không khuyến mãi",
-                "",
-                as_percent=True,
-            )
-            show_chart(fig)
-        roi_items = []
-        for v in chartable:
-            roi_txt = roi_label(v["roi"]) if v["roi"] is not None else DASH
-            inv_txt = f"{integer(v['units'])} đơn vị"
-            roi_items.append(
-                f'<div class="pp-sim-roi-item"><div class="l">{esc(v["label"])}</div>'
-                f'<div class="v">ROI {esc(roi_txt)}</div>'
-                f'<div class="u">Inventory need: {esc(inv_txt)}</div></div>'
-            )
-        show(f'<div class="pp-sim-roi-strip">{"".join(roi_items)}</div>')
-
-
-def _display_table(table: pd.DataFrame) -> pd.DataFrame:
-    show_df = table.copy()
-    show_df["Kịch bản"] = show_df["mechanic"].map(lambda item: MECHANIC_LABELS_VI.get(item, item))
-    show_df["Doanh thu"] = show_df["doanh_thu"].map(lambda value: f"{value:,.0f}")
-    show_df["Lợi nhuận gộp"] = show_df["loi_nhuan_gop"].map(lambda value: f"{value:,.0f}")
-    show_df["ROI"] = show_df["roi"].map(lambda value: roi_label(value))
-    show_df["Margin"] = show_df["margin"].map(lambda value: pct(value, 0))
-    show_df["Trạng thái"] = show_df["bi_tu_choi"].map(lambda value: "Bị loại" if value else "Hợp lệ")
-    return show_df[["Kịch bản", "Trạng thái", "Doanh thu", "Lợi nhuận gộp", "ROI", "Margin", "diem_muc_tieu"]]
+        fig = grouped_bars(
+            ["Doanh thu tăng", "Lợi nhuận tăng"],
+            [(v["label"], [v["revenue_lift"] or 0, v["profit_lift"] or 0]) for v in chartable],
+            "So với không khuyến mãi",
+            "",
+            as_percent=True,
+        )
+        show_chart(fig)
 
 
 def _actions(*, ready: bool, views: list[dict], empty_key: bool = False) -> None:
@@ -385,20 +553,21 @@ def _actions(*, ready: bool, views: list[dict], empty_key: bool = False) -> None
     if selected_view and not selected_view["rejected"]:
         show(
             f'<p class="pp-sim-selected-note">Đã chọn: <b>Phương án {esc(selected_view["letter"])} — '
-            f'{esc(selected_view["label"])}</b></p>'
+            f'{esc(selected_view["label"])}</b> (duy nhất dùng cho Decide).</p>'
         )
     elif ready and not selected:
-        show('<p class="pp-sim-selected-note">Chưa chọn phương án — Decide sẽ dùng phương án mặc định theo điểm mục tiêu.</p>')
+        show(
+            '<p class="pp-sim-selected-note">Chưa chọn phương án — hãy nhấn vào một card trước khi sang Decide.</p>'
+        )
 
-    left, spacer, right = st.columns([1, 1.4, 1.4])
-    with right:
-        key = "sim_next_empty" if empty_key else "sim_next"
-        if ready:
-            # Workflow hiện tại: Decide dùng default_choice nếu chưa chọn — cho phép tiếp tục.
-            if selected_view and selected_view["rejected"]:
-                st.button("Tiếp tục đến Bước 5: Decide →", type="primary", key=key, width="stretch", disabled=True)
-                st.caption("Phương án đang chọn không khả thi — hãy chọn phương án khác.")
-            else:
-                continue_button("Tiếp tục đến Bước 5: Decide →", "decide", key=key)
-        else:
-            st.button("Tiếp tục đến Bước 5: Decide →", type="primary", key=key, width="stretch", disabled=True)
+    key = "sim_next_empty" if empty_key else "sim_next"
+    label = "Tiếp tục đến Bước 5: Decide →"
+    if ready and selected_view and not selected_view["rejected"]:
+        continue_button(label, "decide", key=key)
+    else:
+        st.markdown('<div class="pp-continue-row" aria-hidden="true"></div>', unsafe_allow_html=True)
+        st.button(label, type="primary", key=key, width="stretch", disabled=True)
+        if ready and selected_view and selected_view["rejected"]:
+            st.caption("Phương án đang chọn không khả thi — hãy chọn phương án khác.")
+        elif ready and not selected:
+            st.caption("Cần chọn đúng một phương án trên board trước khi tiếp tục.")

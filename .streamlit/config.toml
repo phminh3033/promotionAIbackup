@@ -37,5 +37,5 @@ toolbarMode = "minimal"
 headless = true
 enableCORS = false
 # Giới hạn upload khi nhiều người dùng thử cùng lúc (MB). Có thể ghi đè bằng DEMO_MAX_UPLOAD_MB ở tầng app.
-maxUploadSize = 5
+maxUploadSize = 30
 maxMessageSize = 200

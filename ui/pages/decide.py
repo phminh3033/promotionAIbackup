@@ -6,16 +6,13 @@ from dataclasses import dataclass, field
 import pandas as pd
 import streamlit as st
 
-from services.workflow import build_decision, default_choice, ensure_scores, scenario_views, top_alternatives
-from src.promotion.mechanics import MECHANIC_LABELS_VI
+from services.workflow import build_decision, default_choice, ensure_scores, scenario_views
 from ui.components import (
     DASH,
     EMPTY,
-    alternative_option_card,
     recommendation_hero,
     recommendation_metric_card,
     reason_list_panel,
-    section,
     show,
     simulation_empty_state,
     tradeoff_list_panel,
@@ -130,27 +127,6 @@ def build_decide_view_model(table: pd.DataFrame, rec, recommended_mechanic: str)
     reasons = [str(x).strip() for x in (rec.why_bullets or []) if str(x).strip()]
     tradeoffs = _derive_tradeoffs(rec, view, views, recommended_mechanic, mechanic)
 
-    alts = []
-    alt_table = top_alternatives(table, mechanic)
-    views_by_scenario = {row["scenario"]: row for row in views.values()}
-    for _, row in alt_table.iterrows():
-        v = views.get(str(row["mechanic"])) or views_by_scenario.get(row["scenario"], {})
-        mech = str(row["mechanic"])
-        alts.append(
-            {
-                "mechanic": mech,
-                "title": MECHANIC_LABELS_VI.get(mech, row.get("scenario", mech)),
-                "description": MECHANIC_DESC.get(mech, "Kịch bản đã mô phỏng trong bước Simulate."),
-                "icon": MECHANIC_ICON.get(mech, "flask"),
-                "metrics": [
-                    ("Revenue lift", signed_pct(v.get("revenue_lift")) if v.get("revenue_lift") is not None else DASH),
-                    ("Profit impact", signed_pct(v.get("profit_lift")) if v.get("profit_lift") is not None else DASH),
-                    ("ROI", roi_label(v.get("roi")) if v.get("roi") is not None else (roi_label(row["roi"]) if pd.notna(row.get("roi")) else DASH)),
-                ],
-                "rejected": bool(row.get("bi_tu_choi", False)),
-            }
-        )
-
     objective = st.session_state.get("decision_objective_label", "")
     subtitle_parts = [rec.product_focus, rec.target_segment, rec.timing_text]
     subtitle = " · ".join(p for p in subtitle_parts if p)
@@ -162,8 +138,8 @@ def build_decide_view_model(table: pd.DataFrame, rec, recommended_mechanic: str)
         description=MECHANIC_DESC.get(mechanic, "Phương án được chọn từ bảng mô phỏng theo điểm mục tiêu và ràng buộc."),
         icon=MECHANIC_ICON.get(mechanic, "flask"),
         is_recommended=is_rec,
-        status_label="Được hệ thống đề xuất" if is_rec else "Phương án do bạn chọn",
-        status_sub=(f"Mục tiêu: {objective}" if objective and is_rec else ("Có thể chọn lại ở danh sách bên dưới" if not is_rec else "")),
+        status_label="Được hệ thống đề xuất" if is_rec else "",
+        status_sub=(f"Mục tiêu: {objective}" if objective and is_rec else ""),
         revenue_lift=signed_pct(view.get("revenue_lift")) if view.get("revenue_lift") is not None else DASH,
         profit_impact=signed_pct(view.get("profit_lift")) if view.get("profit_lift") is not None else DASH,
         roi=roi_label(view.get("roi")) if view.get("roi") is not None else DASH,
@@ -173,7 +149,7 @@ def build_decide_view_model(table: pd.DataFrame, rec, recommended_mechanic: str)
         inventory_sub="Đơn vị sản phẩm (theo mô phỏng / tồn kho)",
         reasons=reasons,
         tradeoffs=tradeoffs,
-        alternatives=alts,
+        alternatives=[],
         footer_note=(
             f"Doanh thu dự kiến {vnd(rec.expected_revenue_range[0])} – {vnd(rec.expected_revenue_range[1])}. "
             f"Lợi nhuận gộp {vnd(rec.expected_gp_range[0])} – {vnd(rec.expected_gp_range[1])}."
@@ -258,32 +234,7 @@ def _render_view(vm: DecideViewModel) -> None:
     with right:
         show(tradeoff_list_panel("Đánh đổi cần lưu ý", vm.tradeoffs))
 
-    show(section("Các phương án khác", "So sánh nhanh các phương án dựa trên kết quả mô phỏng và ràng buộc kinh doanh."))
-    if not vm.alternatives:
-        st.caption("Không còn phương án khác hợp lệ.")
-    else:
-        cards = [
-            alternative_option_card(a["title"], a["description"], a["metrics"], a["icon"])
-            for a in vm.alternatives
-        ]
-        show(f'<div class="pp-dec-alt-grid">{"".join(cards)}</div>')
-        cols = st.columns(len(vm.alternatives))
-        for col, alt in zip(cols, vm.alternatives):
-            with col:
-                if alt.get("rejected"):
-                    st.caption("Không khả thi")
-                    st.button("Xem chi tiết →", key=f"alt_{alt['mechanic']}", width="stretch", disabled=True)
-                else:
-                    if st.button("Xem chi tiết →", key=f"alt_{alt['mechanic']}", width="stretch"):
-                        st.session_state["selected_mechanic"] = alt["mechanic"]
-                        st.session_state["last_recommendation_card"] = None
-                        st.session_state["_decision_for"] = None
-                        st.rerun()
-
-    left, spacer, right = st.columns([1.2, 1.2, 1.4])
-    with left:
-        if st.button("← Quay lại mô phỏng", type="secondary", key="dec_back", width="stretch"):
-            goto("simulate")
+    _, right = st.columns([1.2, 1.4])
     with right:
         if vm.can_accept:
             if st.button("Chọn phương án này →", type="primary", key="dec_accept", width="stretch"):
@@ -291,7 +242,7 @@ def _render_view(vm: DecideViewModel) -> None:
                 goto("execute")
         else:
             st.button("Chọn phương án này →", type="primary", key="dec_accept", width="stretch", disabled=True)
-            st.caption("Phương án hiện tại bị ràng buộc loại — hãy chọn phương án khác.")
+            st.caption("Phương án hiện tại bị ràng buộc loại — hãy chọn phương án khác ở Simulate.")
 
 
 def _empty_decision() -> None:
@@ -316,10 +267,6 @@ def _empty_decision() -> None:
         show(reason_list_panel("Lý do đề xuất", []))
     with right:
         show(tradeoff_list_panel("Đánh đổi cần lưu ý", []))
-    show(section("Các phương án khác", EMPTY))
-    left, spacer, right = st.columns([1.2, 1.2, 1.4])
-    with left:
-        if st.button("← Quay lại mô phỏng", type="secondary", key="dec_back_empty", width="stretch"):
-            goto("simulate")
+    _, right = st.columns([1.2, 1.4])
     with right:
         st.button("Chọn phương án này →", type="primary", key="dec_accept_empty", disabled=True, width="stretch")

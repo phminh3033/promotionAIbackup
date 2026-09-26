@@ -21,7 +21,7 @@ from ui.components import (
     model_insight_card,
     show,
 )
-from ui.formatters import integer, pct, signed_pct
+from ui.formatters import integer_comma, pct, signed_pct
 from ui.shell import continue_button, render_shell
 
 # tab_label, chart_title, chart_subtitle, metric_col, y_title, unit, expected_title, growth_title, icon
@@ -77,7 +77,7 @@ TAB_SPECS = [
     },
 ]
 
-GRANULARITY = {"Ngày": "D", "Tuần": "W", "Tháng": "ME"}
+HORIZON_OPTIONS = [7, 14, 30]
 
 
 def render() -> None:
@@ -96,6 +96,7 @@ def render() -> None:
     df = st.session_state["clean_df"]
     caps = st.session_state["capabilities"]
     scope, scope_value, horizon = _controls(df, caps)
+    _prune_forecast_cache_if_params_changed(scope, scope_value, horizon)
 
     tabs = st.tabs([spec["tab"] for spec in TAB_SPECS])
     for tab, spec in zip(tabs, TAB_SPECS):
@@ -103,6 +104,20 @@ def render() -> None:
             _panel(scope, scope_value, horizon, caps, spec)
 
     _page_actions(detail_key="fc_detail", next_key="fc_next")
+
+
+def _prune_forecast_cache_if_params_changed(scope: str, scope_value, horizon: int) -> None:
+    """Giữ cache khi đổi tab; chỉ xóa khi đổi Phạm vi / Danh mục-SKU / Số ngày dự báo."""
+    fingerprint = f"{scope}|{scope_value}|{horizon}"
+    prev = st.session_state.get("fc_param_fingerprint")
+    if prev is None:
+        st.session_state["fc_param_fingerprint"] = fingerprint
+        return
+    if prev == fingerprint:
+        return
+    st.session_state["fc_param_fingerprint"] = fingerprint
+    st.session_state["forecast_cache"] = {}
+    st.session_state["forecast_history"] = {}
 
 
 def _empty_forecast() -> None:
@@ -161,23 +176,49 @@ def _empty_factor_cards() -> list[str]:
 
 
 def _controls(df, caps):
+    scope_options = ["Toàn công ty", "Theo Danh mục", "Theo SKU"]
     c1, c2, c3 = st.columns(3)
     with c1:
-        scope = st.selectbox("Phạm vi", ["Toàn công ty", "Theo Danh mục", "Theo SKU"], key="fc_scope")
+        scope = st.selectbox("Phạm vi", scope_options, key="fc_scope")
+
     scope_value = None
+    horizon = None
     with c2:
-        if scope == "Theo Danh mục":
+        if scope == "Toàn công ty":
+            # Ẩn Danh mục/Sản phẩm — đặt Số ngày dự báo sát Phạm vi.
+            horizon = st.selectbox(
+                "Số ngày dự báo",
+                HORIZON_OPTIONS,
+                index=1,
+                key="fc_horizon",
+            )
+        elif scope == "Theo Danh mục":
             if not caps.has_category:
                 st.warning("Dữ liệu không có danh mục.")
             else:
-                scope_value = st.selectbox("Danh mục", sorted(df["category"].dropna().unique()), key="fc_cat")
+                scope_value = st.selectbox(
+                    "Danh mục",
+                    sorted(df["category"].dropna().unique()),
+                    key="fc_cat",
+                )
         elif scope == "Theo SKU":
-            top = df.groupby("product_id")["revenue"].sum().sort_values(ascending=False).index.tolist()
+            top = (
+                df.groupby("product_id")["revenue"]
+                .sum()
+                .sort_values(ascending=False)
+                .index.tolist()
+            )
             scope_value = st.selectbox("Sản phẩm", top, key="fc_sku")
-        else:
-            st.caption("Phạm vi toàn bộ dữ liệu đã tải.")
+
     with c3:
-        horizon = st.selectbox("Số ngày dự báo", [7, 14, 30], index=1, key="fc_horizon")
+        if scope != "Toàn công ty":
+            horizon = st.selectbox(
+                "Số ngày dự báo",
+                HORIZON_OPTIONS,
+                index=1,
+                key="fc_horizon",
+            )
+
     return scope, scope_value, int(horizon)
 
 
@@ -213,23 +254,13 @@ def _panel(scope, scope_value, horizon, caps, spec: dict) -> None:
         return
 
     cache_key = f"{scope}|{scope_value}|{metric}|{horizon}"
-    run_col, gran_col = st.columns([2, 1])
-    with run_col:
-        if st.button(f"Chạy {label.lower()}", type="primary", key=f"run_{metric}_{scope}_{horizon}"):
-            try:
-                with st.spinner("Đang backtest và chọn mô hình (có thể xếp hàng nếu nhiều người đang tính)..."):
-                    run_forecast(scope, scope_value, metric, label, horizon)
-            except (ValueError, RuntimeError) as exc:
-                st.warning(str(exc)) if isinstance(exc, RuntimeError) else st.error(str(exc))
-                return
-    with gran_col:
-        grain_label = st.selectbox(
-            "Độ phân giải",
-            list(GRANULARITY.keys()),
-            index=2,
-            key=f"fc_grain_{metric}",
-            label_visibility="collapsed",
-        )
+    if st.button(f"Chạy {label.lower()}", type="primary", key=f"run_{metric}_{scope}_{horizon}"):
+        try:
+            with st.spinner("Đang backtest và chọn mô hình (có thể xếp hàng nếu nhiều người đang tính)..."):
+                run_forecast(scope, scope_value, metric, label, horizon)
+        except (ValueError, RuntimeError) as exc:
+            st.warning(str(exc)) if isinstance(exc, RuntimeError) else st.error(str(exc))
+            return
 
     result = st.session_state.get("forecast_cache", {}).get(cache_key)
     history = st.session_state.get("forecast_history", {}).get(cache_key)
@@ -248,7 +279,8 @@ def _panel(scope, scope_value, horizon, caps, spec: dict) -> None:
             )
         return
 
-    hist_x, hist_y, fc_x, fc_y, low, high = _display_series(history, result, GRANULARITY[grain_label])
+    # Mặc định hiển thị theo ngày — không còn dropdown độ phân giải.
+    hist_x, hist_y, fc_x, fc_y, low, high = _display_series(history, result, "D")
     conf_pct = _confidence_pct(result)
     band_label = f"Khoảng tin cậy (~80%{f', {conf_pct}%' if conf_pct else ''})" if conf_pct else "Khoảng tin cậy (~80%)"
     # Chỉ vẽ band khi lower/upper thực sự khác nhau (model luôn trả về; naive cũng có).
@@ -269,7 +301,7 @@ def _panel(scope, scope_value, horizon, caps, spec: dict) -> None:
             actual_name=spec["actual_name"],
             forecast_name="Dự báo từ mô hình",
             band_name=band_label if has_band else None,
-            height=330,
+            height=420,
         )
         show_chart(fig)
         if not has_band:
@@ -314,7 +346,7 @@ def _summary_from_result(spec: dict, unit: str, result, history, conf_pct: int |
         [
             forecast_metric_card(
                 spec["expected_title"],
-                integer(expected),
+                integer_comma(expected),
                 spec["expected_icon"],
                 unit=unit,
                 delta=growth_txt if growth is not None else None,
@@ -331,7 +363,7 @@ def _summary_from_result(spec: dict, unit: str, result, history, conf_pct: int |
             ),
             forecast_metric_card(
                 "Khoảng dự báo (~80%)",
-                f"{integer(low)} – {integer(high)}",
+                f"{integer_comma(low)} – {integer_comma(high)}",
                 "chart",
                 unit=unit,
                 accent="green",
@@ -473,29 +505,57 @@ def _factor_cards(history: pd.Series, result, spec: dict) -> list[str]:
 
 def _page_actions(*, detail_key: str, next_key: str) -> None:
     st.markdown('<div class="pp-page-actions"></div>', unsafe_allow_html=True)
-    left, spacer, right = st.columns([1.2, 1.6, 1.4])
-    with left:
-        if st.button("Xem chi tiết phân tích →", type="secondary", key=detail_key, width="stretch"):
-            st.session_state["fc_show_detail"] = True
-    with right:
-        continue_button("Tiếp tục đến Bước 3: Prepare →", "prepare", key=next_key)
-
-    if st.session_state.get("fc_show_detail"):
-        _detail_expander()
+    if st.button("Xem chi tiết phân tích →", type="secondary", key=detail_key, width="stretch"):
+        _dlg_forecast_detail()
+    continue_button("Tiếp tục đến Bước 3: Prepare →", "prepare", key=next_key)
 
 
-def _detail_expander() -> None:
+@st.dialog("Chi tiết phân tích & bảng backtest", width="large")
+def _dlg_forecast_detail() -> None:
+    _render_forecast_detail()
+
+
+def _format_forecast_version(cache_key: str) -> str:
+    """Cache key → nhãn tham số có tên (Phạm vi / Danh mục|SKU / Số ngày)."""
+    parts = str(cache_key).split("|")
+    if len(parts) < 4:
+        return cache_key
+    scope, scope_value, _metric, horizon = parts[0], parts[1], parts[2], parts[3]
+    labels = [f"Phạm vi: {scope}"]
+    if scope == "Theo Danh mục" and scope_value not in {None, "None", ""}:
+        labels.append(f"Danh mục: {scope_value}")
+    elif scope == "Theo SKU" and scope_value not in {None, "None", ""}:
+        labels.append(f"SKU: {scope_value}")
+    labels.append(f"Số ngày dự báo: {horizon}")
+    return " | ".join(labels)
+
+
+def _format_backtest_scores(scores: pd.DataFrame) -> pd.DataFrame:
+    display = scores.copy()
+    if "WAPE" in display.columns:
+        display["WAPE"] = display["WAPE"].map(lambda value: f"{value:.1%}" if pd.notna(value) else "—")
+    if "MAE" in display.columns:
+        display["MAE"] = display["MAE"].map(lambda value: f"{float(value):.2f}" if pd.notna(value) else "—")
+    if "RMSE" in display.columns:
+        display["RMSE"] = display["RMSE"].map(lambda value: f"{float(value):.2f}" if pd.notna(value) else "—")
+    if "MAPE" in display.columns:
+        display["MAPE"] = display["MAPE"].map(
+            lambda value: f"{float(value):.1%}" if pd.notna(value) else "—"
+        )
+    return display
+
+
+def _render_forecast_detail() -> None:
     cache = st.session_state.get("forecast_cache") or {}
     if not cache:
         st.info("Chưa có kết quả dự báo trong phiên để xem chi tiết.")
         return
-    with st.expander("Chi tiết phân tích & bảng backtest", expanded=True):
-        for key, result in cache.items():
-            st.caption(f"Phiên bản: `{key}` · Mô hình: **{result.model_name}** · Độ tin cậy: **{result.confidence}**")
-            st.write(result.explanation.replace("**", ""))
-            if not result.all_model_scores.empty:
-                scores = result.all_model_scores.copy()
-                if "WAPE" in scores.columns:
-                    scores["WAPE"] = scores["WAPE"].map(lambda value: f"{value:.1%}" if pd.notna(value) else "—")
-                st.dataframe(scores, width="stretch", hide_index=True)
-            st.divider()
+    for key, result in cache.items():
+        st.caption(
+            f"Phiên bản: `{_format_forecast_version(key)}` · "
+            f"Mô hình: **{result.model_name}** · Độ tin cậy: **{result.confidence}**"
+        )
+        st.write(result.explanation.replace("**", ""))
+        if not result.all_model_scores.empty:
+            st.dataframe(_format_backtest_scores(result.all_model_scores), width="stretch", hide_index=True)
+        st.divider()

@@ -37,7 +37,7 @@ from ui.components import (
     muted,
     show,
 )
-from ui.formatters import integer
+from ui.formatters import format_int_commas, integer, parse_int_commas
 from ui.pages import data_workspace
 from ui.shell import continue_button, render_shell
 
@@ -214,13 +214,7 @@ def _cards() -> None:
 
 
 def _bottom_actions() -> None:
-    left, right = st.columns([1, 2], gap="medium")
-    with left:
-        if st.button("Lưu nháp", type="secondary", key="und_draft", width="stretch"):
-            st.session_state["understand_draft_saved"] = True
-            st.toast("Đã lưu nháp trong phiên hiện tại.")
-    with right:
-        continue_button("Tiếp tục đến Bước 2: Forecast →", "forecast", key="und_next")
+    continue_button("Tiếp tục đến Bước 2: Forecast →", "forecast", key="und_next")
 
 
 def _open_detail(card_id: str) -> None:
@@ -229,6 +223,8 @@ def _open_detail(card_id: str) -> None:
     elif card_id == "goal":
         _dlg_goal()
     elif card_id == "local":
+        # Đồng bộ widget từ bối cảnh đã lưu trước khi mở modal → tự động điền.
+        _sync_local_widgets_from_ctx(st.session_state["local_context"], force=True)
         _dlg_local()
     elif card_id == "customer":
         _dlg_customers()
@@ -248,6 +244,20 @@ def _dlg_local() -> None:
     _local()
 
 
+def _sync_local_widgets_from_ctx(ctx: LocalContext, *, force: bool = False) -> None:
+    """Gán session widget keys từ LocalContext đã lưu (để autofill khi mở lại modal)."""
+    values = {
+        "lc_store": ctx.store_name or "",
+        "lc_events": [item for item in ctx.business_events if item in BUSINESS_EVENTS],
+        "lc_customers": [item for item in ctx.customer_contexts if item in CUSTOMER_CONTEXTS],
+        "lc_stores": [item for item in ctx.store_contexts if item in STORE_CONTEXTS],
+        "lc_note": ctx.free_text or "",
+    }
+    for key, value in values.items():
+        if force or key not in st.session_state:
+            st.session_state[key] = value
+
+
 @st.dialog("Customer insight", width="large")
 def _dlg_customers() -> None:
     _customers()
@@ -264,160 +274,463 @@ def _dlg_signals() -> None:
 
 
 def _goal() -> None:
+    """Hồ sơ + mục tiêu — widget có key để left menu sync vào session khi chuyển trang."""
     st.caption("Hồ sơ doanh nghiệp và Mục tiêu kinh doanh")
-    _business_profile_form()
-    st.divider()
-    st.markdown("**Mục tiêu kinh doanh**")
-    st.caption("Mục tiêu này được dùng khi chấm điểm kịch bản khuyến mãi.")
-    objective = st.radio(
-        "Mục tiêu",
-        OBJECTIVES,
-        index=OBJECTIVES.index(st.session_state["objective"]) if st.session_state["objective"] in OBJECTIVES else 1,
-        format_func=lambda item: OBJECTIVE_LABELS_VI[item],
-        horizontal=True,
-        key="objective_radio",
-    )
-    st.session_state["objective"] = objective
-    st.session_state["business_profile"].primary_objective = objective
-    st.caption("Chỉ số ưu tiên: " + ", ".join(OBJECTIVE_PRIORITY_METRICS_VI[objective]))
-    suggestion = st.session_state["local_context"].suggested_objective()
-    if suggestion:
-        suggested, reason = suggestion
-        st.info(f"Gợi ý từ bối cảnh địa phương: {OBJECTIVE_LABELS_VI[suggested]}. {reason}")
-        if st.button("Áp dụng gợi ý", key="apply_suggested"):
-            st.session_state["objective"] = suggested
-            st.rerun()
-
-
-def _business_profile_form() -> None:
     profile: BusinessProfile = st.session_state["business_profile"]
-    st.markdown("**Hồ sơ doanh nghiệp**")
-    with st.form("business_profile_form"):
-        c1, c2 = st.columns(2)
-        with c1:
-            business_name = st.text_input("Tên doanh nghiệp", value=profile.business_name)
-            industry = st.text_input("Ngành kinh doanh", value=profile.industry)
-            model_options = ["B2C", "B2B", "Cả hai"]
-            b2b_or_b2c = st.selectbox(
-                "Mô hình",
-                model_options,
-                index=model_options.index(profile.b2b_or_b2c) if profile.b2b_or_b2c in model_options else 0,
-            )
-            n_stores = st.number_input("Số cửa hàng/chi nhánh", min_value=1, value=int(profile.n_stores))
-            sku_range = st.text_input("Khoảng số lượng SKU (vd: 30-100)", value=profile.sku_range)
-            typical_purchase_cycle_days = st.number_input(
-                "Chu kỳ mua hàng phổ biến (ngày)",
-                min_value=1,
-                value=int(profile.typical_purchase_cycle_days),
-            )
-            has_seasonality = st.checkbox(
-                "Ngành hàng có yếu tố mùa vụ rõ rệt",
-                value=profile.has_seasonality,
-            )
-        with c2:
-            target_margin_pct = st.slider(
-                "Biên lợi nhuận mục tiêu (%)", 0, 80, int(profile.target_margin_pct * 100)
-            ) / 100
-            min_margin_pct = st.slider(
-                "Margin tối thiểu chấp nhận được (%)", 0, 80, int(profile.min_margin_pct * 100)
-            ) / 100
-            max_discount_pct = st.slider(
-                "Mức giảm giá tối đa cho phép (%)", 0, 90, int(profile.max_discount_pct * 100)
-            ) / 100
-            safety_stock_days = st.number_input(
-                "Safety Stock mong muốn (ngày)", min_value=0, value=int(profile.safety_stock_days)
-            )
-            lead_time_days = st.number_input(
-                "Lead Time nhập hàng (ngày)", min_value=0, value=int(profile.lead_time_days)
-            )
-            promotion_budget = st.number_input(
-                "Ngân sách Promotion (VNĐ)",
-                min_value=0,
-                value=int(profile.promotion_budget),
-                step=1_000_000,
-            )
-            service_capacity = st.number_input(
-                "Năng lực phục vụ (khách/nhân viên/giờ)",
-                min_value=1.0,
-                value=float(profile.service_capacity_per_staff_per_hour),
-            )
-            min_roi_pct = st.slider(
-                "ROI tối thiểu chấp nhận được (%)", 0, 200, int(profile.min_roi_pct * 100)
-            ) / 100
-            max_campaign_duration_days = st.number_input(
-                "Thời gian chạy campaign tối đa (ngày)",
-                min_value=1,
-                value=int(profile.max_campaign_duration_days),
-            )
+    current_objective = st.session_state.get("objective", profile.primary_objective)
+    if current_objective not in OBJECTIVES:
+        current_objective = OBJECTIVES[1]
 
-        mask_customer_id = st.checkbox(
-            "Ẩn/mã hoá Mã khách hàng khi hiển thị bảng chi tiết & xuất báo cáo",
-            value=profile.mask_customer_id,
-            help="Bật nếu bạn cần chia sẻ báo cáo mà không muốn lộ danh tính khách hàng.",
+    if st.session_state.pop("_bp_save_ok", None):
+        st.success("Đã lưu hồ sơ doanh nghiệp vào phiên hiện tại.")
+
+    # Áp dụng thay đổi widget keys TRƯỚC khi tạo widget (tránh AlreadyInstantiated).
+    pending_obj = st.session_state.pop("_bp_pending_objective", None)
+    if pending_obj in OBJECTIVES:
+        st.session_state["bp_objective"] = pending_obj
+        st.session_state["objective"] = pending_obj
+        current_objective = pending_obj
+        profile.primary_objective = pending_obj
+
+    pending_load = st.session_state.pop("_bp_pending_load_profile", None)
+    if pending_load is not None:
+        st.session_state["business_profile"] = pending_load
+        st.session_state["objective"] = pending_load.primary_objective
+        st.session_state["bp_blank_defaults_v1"] = True
+        st.session_state["bp_profile_committed"] = True
+        st.session_state.pop("prep_autofilled_from_bp", None)
+        _seed_profile_widgets(pending_load, pending_load.primary_objective, force=True)
+        _snapshot_bp_form(pending_load, pending_load.primary_objective)
+        from src.utils.state import apply_business_profile_to_prepare
+
+        apply_business_profile_to_prepare(pending_load)
+        profile = pending_load
+        current_objective = pending_load.primary_objective
+
+    # Sau Lưu: ép seed lại từ business_profile đã persist.
+    if st.session_state.pop("_bp_pending_after_save", None):
+        profile = st.session_state["business_profile"]
+        current_objective = st.session_state.get("objective", profile.primary_objective)
+        if current_objective not in OBJECTIVES:
+            current_objective = OBJECTIVES[1]
+        _seed_profile_widgets(profile, current_objective, force=True)
+        _snapshot_bp_form(profile, current_objective)
+        from src.utils.state import apply_business_profile_to_prepare
+
+        apply_business_profile_to_prepare(profile)
+    else:
+        _restore_bp_form_snapshot()
+        _seed_profile_widgets(profile, current_objective)
+
+    model_options = ["B2C", "B2B", "Cả hai"]
+
+    st.markdown("**Hồ sơ doanh nghiệp**")
+    c1, c2 = st.columns(2)
+    with c1:
+        _required_label("Tên doanh nghiệp")
+        st.text_input("Tên doanh nghiệp", key="bp_business_name", label_visibility="collapsed")
+        _required_label("Ngành kinh doanh")
+        st.text_input("Ngành kinh doanh", key="bp_industry", label_visibility="collapsed")
+        _required_label("Mô hình")
+        st.selectbox(
+            "Mô hình",
+            model_options,
+            key="bp_model",
+            label_visibility="collapsed",
         )
-        allowed_mechanics = st.multiselect(
-            "Cơ chế khuyến mãi doanh nghiệp cho phép sử dụng",
-            options=list(MECHANIC_LABELS_VI.keys()),
-            default=[m for m in profile.allowed_mechanics if m in MECHANIC_LABELS_VI],
-            format_func=lambda key: MECHANIC_LABELS_VI[key],
+        _required_label("Số cửa hàng/chi nhánh")
+        st.number_input(
+            "Số cửa hàng/chi nhánh",
+            min_value=1,
+            step=1,
+            key="bp_n_stores",
+            label_visibility="collapsed",
         )
-        submitted = st.form_submit_button("Lưu hồ sơ doanh nghiệp", type="primary")
-        if submitted:
-            new_profile = BusinessProfile(
-                business_name=business_name,
-                industry=industry,
-                b2b_or_b2c=b2b_or_b2c,
-                n_stores=int(n_stores),
-                sku_range=sku_range,
-                typical_purchase_cycle_days=int(typical_purchase_cycle_days),
-                target_margin_pct=target_margin_pct,
-                min_margin_pct=min_margin_pct,
-                max_discount_pct=max_discount_pct,
-                safety_stock_days=int(safety_stock_days),
-                lead_time_days=int(lead_time_days),
-                allowed_mechanics=allowed_mechanics,
-                promotion_budget=float(promotion_budget),
-                service_capacity_per_staff_per_hour=float(service_capacity),
-                primary_objective=st.session_state.get("objective", profile.primary_objective),
-                has_seasonality=has_seasonality,
-                min_roi_pct=min_roi_pct,
-                max_campaign_duration_days=int(max_campaign_duration_days),
-                mask_customer_id=mask_customer_id,
-            )
-            st.session_state["business_profile"] = new_profile
-            save_profile(new_profile, name=business_name.strip().replace(" ", "_").lower() or "default")
-            st.success("Đã lưu hồ sơ doanh nghiệp.")
-            st.rerun()
+        _required_label("Khoảng số lượng SKU (vd: 30-100)")
+        st.text_input(
+            "Khoảng số lượng SKU (vd: 30-100)",
+            key="bp_sku_range",
+            label_visibility="collapsed",
+        )
+        _required_label("Chu kỳ mua hàng phổ biến (ngày)")
+        st.number_input(
+            "Chu kỳ mua hàng phổ biến (ngày)",
+            min_value=1,
+            step=1,
+            key="bp_cycle_days",
+            label_visibility="collapsed",
+        )
+    with c2:
+        _required_label("Biên lợi nhuận mục tiêu (%)")
+        st.slider(
+            "Biên lợi nhuận mục tiêu (%)",
+            0,
+            80,
+            key="bp_target_margin",
+            label_visibility="collapsed",
+        )
+        _required_label("Margin tối thiểu chấp nhận được (%)")
+        st.slider(
+            "Margin tối thiểu chấp nhận được (%)",
+            0,
+            80,
+            key="bp_min_margin",
+            label_visibility="collapsed",
+            on_change=_mark_bp_params_authority,
+        )
+        _required_label("Mức giảm giá tối đa cho phép (%)")
+        st.slider(
+            "Mức giảm giá tối đa cho phép (%)",
+            0,
+            90,
+            key="bp_max_discount",
+            label_visibility="collapsed",
+        )
+        _required_label("Safety Stock mong muốn (ngày)")
+        st.number_input(
+            "Safety Stock mong muốn (ngày)",
+            min_value=0,
+            key="bp_safety",
+            label_visibility="collapsed",
+            on_change=_mark_bp_params_authority,
+        )
+        _required_label("Lead Time nhập hàng (ngày)")
+        st.number_input(
+            "Lead Time nhập hàng (ngày)",
+            min_value=1,
+            key="bp_lead",
+            label_visibility="collapsed",
+            on_change=_mark_bp_params_authority,
+        )
+        _required_label("Ngân sách Promotion (VNĐ)")
+        st.text_input(
+            "Ngân sách Promotion (VNĐ)",
+            key="bp_budget_fmt",
+            on_change=_sync_bp_budget_fmt,
+            label_visibility="collapsed",
+            help="Nhập số nguyên; hệ thống tự thêm dấu phẩy phân tách hàng nghìn.",
+        )
+        _required_label("Năng lực phục vụ (khách/nhân viên/giờ)")
+        st.text_input(
+            "Năng lực phục vụ (khách/nhân viên/giờ)",
+            key="bp_capacity_fmt",
+            on_change=_sync_bp_capacity_fmt,
+            label_visibility="collapsed",
+            help="Nhập số nguyên; hệ thống tự thêm dấu phẩy phân tách hàng nghìn.",
+        )
+        _required_label("ROI tối thiểu chấp nhận được (%)")
+        st.slider(
+            "ROI tối thiểu chấp nhận được (%)",
+            0,
+            200,
+            key="bp_min_roi",
+            label_visibility="collapsed",
+        )
+        _required_label("Thời gian chạy campaign tối đa (ngày)")
+        st.number_input(
+            "Thời gian chạy campaign tối đa (ngày)",
+            min_value=1,
+            step=1,
+            key="bp_max_days",
+            label_visibility="collapsed",
+        )
+
+    _required_label("Cơ chế khuyến mãi doanh nghiệp cho phép sử dụng")
+    st.multiselect(
+        "Cơ chế khuyến mãi doanh nghiệp cho phép sử dụng",
+        options=list(MECHANIC_LABELS_VI.keys()),
+        format_func=lambda key: MECHANIC_LABELS_VI[key],
+        key="bp_allowed_mechanics",
+        label_visibility="collapsed",
+    )
 
     existing_profiles = list_profiles()
     if existing_profiles:
         with st.expander("Tải hồ sơ đã lưu trước đó"):
-            chosen = st.selectbox("Chọn hồ sơ", existing_profiles, key="bp_load_select")
+            chosen_profile = st.selectbox("Chọn hồ sơ", existing_profiles, key="bp_load_select")
             if st.button("Tải hồ sơ này", key="bp_load_btn"):
-                loaded = load_profile(chosen)
+                loaded = load_profile(chosen_profile)
                 if loaded:
-                    st.session_state["business_profile"] = loaded
-                    st.session_state["objective"] = loaded.primary_objective
-                    st.success(f"Đã tải hồ sơ '{chosen}'.")
+                    # Không ghi widget keys tại đây — để lần rerun kế tiếp seed trước instantiate.
+                    st.session_state["_bp_pending_load_profile"] = loaded
                     st.rerun()
+
+    st.divider()
+    st.markdown("**Mục tiêu kinh doanh**")
+    st.caption("Mục tiêu này được dùng khi chấm điểm kịch bản khuyến mãi.")
+    _required_label("Mục tiêu")
+    objective = st.radio(
+        "Mục tiêu",
+        OBJECTIVES,
+        format_func=lambda item: OBJECTIVE_LABELS_VI[item],
+        horizontal=True,
+        key="bp_objective",
+        label_visibility="collapsed",
+    )
+    st.caption("Chỉ số ưu tiên: " + ", ".join(OBJECTIVE_PRIORITY_METRICS_VI[objective]))
+
+    suggestion = st.session_state["local_context"].suggested_objective()
+    if suggestion:
+        suggested, reason = suggestion
+        st.info(f"Gợi ý từ bối cảnh địa phương: {OBJECTIVE_LABELS_VI[suggested]}. {reason}")
+        if st.button("Áp dụng gợi ý", key="bp_apply_suggested"):
+            st.session_state["_bp_pending_objective"] = suggested
+            st.rerun()
+
+    can_save = _bp_form_complete()
+    if st.button(
+        "Lưu hồ sơ doanh nghiệp",
+        type="primary",
+        key="bp_save",
+        disabled=not can_save,
+    ):
+        from src.utils.state import apply_business_profile_to_prepare, persist_session_inputs
+
+        # Đồng bộ widget → business_profile, ghi JSON, snapshot form bền vững.
+        persist_session_inputs()
+        new_profile = st.session_state["business_profile"]
+        apply_business_profile_to_prepare(new_profile)
+        save_profile(
+            new_profile,
+            name=(new_profile.business_name or "default").strip().replace(" ", "_").lower() or "default",
+        )
+        obj = new_profile.primary_objective if new_profile.primary_objective in OBJECTIVES else current_objective
+        _snapshot_bp_form(new_profile, obj)
+        st.session_state["bp_blank_defaults_v1"] = True
+        st.session_state["bp_profile_committed"] = True
+        st.session_state["bp_defaults_restored_v2"] = True
+        st.session_state.pop("prep_autofilled_from_bp", None)
+        st.session_state["_bp_pending_after_save"] = True
+        st.session_state["_bp_save_ok"] = True
+        st.rerun()
+    if not can_save:
+        st.caption("Vui lòng điền đầy đủ các trường bắt buộc (*) trước khi lưu.")
+
+
+def _bp_form_complete() -> bool:
+    """True khi mọi trường bắt buộc đã có giá trị hợp lệ."""
+    name = str(st.session_state.get("bp_business_name") or "").strip()
+    industry = str(st.session_state.get("bp_industry") or "").strip()
+    model = st.session_state.get("bp_model")
+    sku = str(st.session_state.get("bp_sku_range") or "").strip()
+    mechanics = st.session_state.get("bp_allowed_mechanics") or []
+    objective = st.session_state.get("bp_objective")
+    try:
+        n_stores = int(st.session_state.get("bp_n_stores") or 0)
+        cycle = int(st.session_state.get("bp_cycle_days") or 0)
+        max_days = int(st.session_state.get("bp_max_days") or 0)
+        budget = int(float(st.session_state.get("bp_budget") or 0))
+        capacity = int(float(st.session_state.get("bp_capacity") or 0))
+        # Cho phép đọc từ ô format nếu chưa sync.
+        if not budget and st.session_state.get("bp_budget_fmt"):
+            budget = parse_int_commas(st.session_state["bp_budget_fmt"], default=0, minimum=0)
+        if not capacity and st.session_state.get("bp_capacity_fmt"):
+            capacity = parse_int_commas(st.session_state["bp_capacity_fmt"], default=0, minimum=0)
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        name
+        and industry
+        and model in {"B2C", "B2B", "Cả hai"}
+        and n_stores > 0
+        and sku
+        and cycle > 0
+        and max_days > 0
+        and budget > 0
+        and capacity > 0
+        and mechanics
+        and objective in OBJECTIVES
+        and "bp_target_margin" in st.session_state
+        and "bp_min_margin" in st.session_state
+        and "bp_max_discount" in st.session_state
+        and "bp_min_roi" in st.session_state
+        and "bp_safety" in st.session_state
+        and "bp_lead" in st.session_state
+    )
+
+
+def _mark_bp_params_authority() -> None:
+    """Hồ sơ là nguồn sự thật cho 4 ô Prepare — seed lại ở lần render kế."""
+    st.session_state["params_authority"] = "bp"
+    st.session_state.pop("prep_autofilled_from_bp", None)
+
+
+def _sync_bp_budget_fmt() -> None:
+    raw = st.session_state.get("bp_budget_fmt")
+    if not str(raw or "").strip():
+        st.session_state["bp_budget"] = 0
+        st.session_state["bp_budget_fmt"] = ""
+        _mark_bp_params_authority()
+        return
+    value = parse_int_commas(raw, default=0, minimum=0)
+    st.session_state["bp_budget"] = value
+    st.session_state["bp_budget_fmt"] = format_int_commas(value) if value else ""
+    _mark_bp_params_authority()
+
+
+def _sync_bp_capacity_fmt() -> None:
+    raw = st.session_state.get("bp_capacity_fmt")
+    if not str(raw or "").strip():
+        st.session_state["bp_capacity"] = 0
+        st.session_state["bp_capacity_fmt"] = ""
+        return
+    value = parse_int_commas(raw, default=0, minimum=0)
+    st.session_state["bp_capacity"] = value
+    st.session_state["bp_capacity_fmt"] = format_int_commas(value) if value else ""
+
+
+def _profile_to_seeds(profile: BusinessProfile, objective: str) -> dict:
+    budget = int(profile.promotion_budget)
+    capacity = max(0, int(round(float(profile.service_capacity_per_staff_per_hour))))
+    model = profile.b2b_or_b2c if profile.b2b_or_b2c in ("B2C", "B2B", "Cả hai") else "B2C"
+    return {
+        "bp_business_name": profile.business_name or "",
+        "bp_industry": profile.industry or "",
+        "bp_model": model,
+        "bp_n_stores": max(1, int(profile.n_stores or 1)),
+        "bp_sku_range": profile.sku_range or "",
+        "bp_cycle_days": max(1, int(profile.typical_purchase_cycle_days or 1)),
+        "bp_seasonality": bool(profile.has_seasonality),
+        "bp_target_margin": int(profile.target_margin_pct * 100),
+        "bp_min_margin": int(profile.min_margin_pct * 100),
+        "bp_max_discount": int(profile.max_discount_pct * 100),
+        "bp_safety": int(profile.safety_stock_days),
+        "bp_lead": max(1, int(profile.lead_time_days or 1)),
+        "bp_budget": budget,
+        "bp_budget_fmt": format_int_commas(budget) if budget else "",
+        "bp_capacity": capacity,
+        "bp_capacity_fmt": format_int_commas(capacity) if capacity else "",
+        "bp_min_roi": int(profile.min_roi_pct * 100),
+        "bp_max_days": max(1, int(profile.max_campaign_duration_days or 1)),
+        "bp_mask_cid": bool(profile.mask_customer_id),
+        "bp_allowed_mechanics": [m for m in profile.allowed_mechanics if m in MECHANIC_LABELS_VI],
+        "bp_objective": objective if objective in OBJECTIVES else OBJECTIVES[1],
+    }
+
+
+def _snapshot_bp_form(profile: BusinessProfile, objective: str) -> None:
+    """Bản sao form bền vững — dialog đóng sẽ xóa widget keys bp_*."""
+    st.session_state["bp_form_snapshot"] = _profile_to_seeds(profile, objective)
+
+
+def _restore_bp_form_snapshot() -> None:
+    """Khôi phục widget keys từ snapshot khi mở lại modal / quay lại trang."""
+    snap = st.session_state.get("bp_form_snapshot")
+    if not isinstance(snap, dict):
+        return
+    for key, value in snap.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+def _seed_profile_widgets(profile: BusinessProfile, objective: str, *, force: bool = False) -> None:
+    """Khởi tạo widget keys từ BusinessProfile (giá trị demo/đã lưu)."""
+    # Luôn clamp trước — session cũ có bp_lead=0 sẽ crash number_input(min_value=1).
+    if "bp_lead" in st.session_state:
+        try:
+            if int(st.session_state["bp_lead"]) < 1:
+                st.session_state["bp_lead"] = 1
+        except (TypeError, ValueError):
+            st.session_state["bp_lead"] = 1
+    for key, minimum in (("bp_n_stores", 1), ("bp_cycle_days", 1), ("bp_max_days", 1)):
+        if key in st.session_state:
+            try:
+                if int(st.session_state[key]) < minimum:
+                    st.session_state[key] = minimum
+            except (TypeError, ValueError):
+                st.session_state[key] = minimum
+    if "bp_model" in st.session_state and st.session_state["bp_model"] not in ("B2C", "B2B", "Cả hai"):
+        st.session_state["bp_model"] = "B2C"
+
+    if force:
+        seeds = _profile_to_seeds(profile, objective)
+        for key, value in seeds.items():
+            st.session_state[key] = value
+        _snapshot_bp_form(profile, objective)
+        return
+
+    # Ưu tiên snapshot đã lưu / hồ sơ đã commit khi thiếu widget key.
+    _restore_bp_form_snapshot()
+    if st.session_state.get("bp_profile_committed"):
+        for key, value in _profile_to_seeds(profile, objective).items():
+            if key not in st.session_state:
+                st.session_state[key] = value
+        return
+
+    # Lần đầu phiên: seed từ profile hiện tại (demo/yaml).
+    if not st.session_state.get("bp_defaults_restored_v2"):
+        for key, value in _profile_to_seeds(profile, objective).items():
+            st.session_state[key] = value
+        st.session_state["bp_defaults_restored_v2"] = True
+        return
+
+    seeds = _profile_to_seeds(profile, objective)
+    for key, value in seeds.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+def _required_label(text: str) -> None:
+    """Nhãn trường bắt buộc kèm dấu * đỏ."""
+    st.markdown(
+        f'{text} <span style="color:#DC2626;font-weight:700">*</span>',
+        unsafe_allow_html=True,
+    )
 
 
 def _local() -> None:
     ctx = st.session_state["local_context"]
+    # Đảm bảo widget keys tồn tại (tránh value=/default= xung đột với key=).
+    _sync_local_widgets_from_ctx(ctx, force=False)
+
     st.caption("Nhập thủ công. Nguồn tự động chưa kết nối nên không có số liệu ngoài.")
-    store_name = st.text_input("Tên cửa hàng / khu vực", value=ctx.store_name, key="lc_store")
-    events_sel = st.multiselect("Sự kiện kinh doanh", BUSINESS_EVENTS, default=ctx.business_events, key="lc_events")
-    customers = st.multiselect("Khách hàng khu vực", CUSTOMER_CONTEXTS, default=ctx.customer_contexts, key="lc_customers")
-    stores = st.multiselect("Tình hình cửa hàng", STORE_CONTEXTS, default=ctx.store_contexts, key="lc_stores")
-    note = st.text_area("Ghi chú", value=ctx.free_text, key="lc_note")
-    if st.button("Lưu bối cảnh", type="primary", key="save_local"):
-        st.session_state["local_context"] = LocalContext(
-            store_name=store_name,
-            business_events=events_sel,
-            customer_contexts=customers,
-            store_contexts=stores,
-            free_text=note,
+    _required_label("Tên cửa hàng / khu vực")
+    store_name = st.text_input(
+        "Tên cửa hàng / khu vực",
+        key="lc_store",
+        label_visibility="collapsed",
+    )
+    _required_label("Sự kiện kinh doanh")
+    events_sel = st.multiselect(
+        "Sự kiện kinh doanh",
+        BUSINESS_EVENTS,
+        key="lc_events",
+        label_visibility="collapsed",
+    )
+    _required_label("Khách hàng khu vực")
+    customers = st.multiselect(
+        "Khách hàng khu vực",
+        CUSTOMER_CONTEXTS,
+        key="lc_customers",
+        label_visibility="collapsed",
+    )
+    _required_label("Tình hình cửa hàng")
+    stores = st.multiselect(
+        "Tình hình cửa hàng",
+        STORE_CONTEXTS,
+        key="lc_stores",
+        label_visibility="collapsed",
+    )
+    note = st.text_area("Ghi chú", key="lc_note")
+
+    can_save = bool(
+        str(store_name or "").strip()
+        and events_sel
+        and customers
+        and stores
+    )
+    if st.button("Lưu bối cảnh", type="primary", key="save_local", disabled=not can_save):
+        new_ctx = LocalContext(
+            store_name=str(store_name or "").strip(),
+            business_events=list(events_sel or []),
+            customer_contexts=list(customers or []),
+            store_contexts=list(stores or []),
+            free_text=str(note or ""),
         )
+        # Lưu vào phiên — các bước sau đọc st.session_state["local_context"].
+        st.session_state["local_context"] = new_ctx
+        st.session_state["business_events"] = list(new_ctx.business_events)
+        st.success("Đã lưu bối cảnh địa phương vào phiên hiện tại.")
         st.rerun()
 
 
@@ -531,14 +844,109 @@ def _rfm_detail_table(seg: SegmentationResult) -> pd.DataFrame:
 
 
 def _chart_hoverlabel() -> dict:
-    """Tooltip trắng, chữ rõ, theo con trỏ — chỉ hiện giá trị (qua hovertemplate)."""
+    """Tooltip hover Plotly — align chỉ nhận left/right/auto (không có center)."""
     return dict(
-        bgcolor="white",
-        bordercolor="#E2E8F0",
-        font=dict(size=13, color=INK, family=FONT),
-        align="left",
+        bordercolor="rgba(255,255,255,0.45)",
+        font=dict(size=13, family=FONT),
+        align="auto",
         namelength=-1,
     )
+
+
+def _contrast_ink(color) -> str:
+    """Chữ trắng/đen tương phản với nền marker."""
+    if color is None:
+        return INK
+    text = str(color).strip()
+    if not text or text.lower() in {"none", "null"}:
+        return INK
+    if text.startswith("rgba"):
+        try:
+            inner = text[text.find("(") + 1 : text.find(")")].split(",")
+            r, g, b = (int(float(inner[0])), int(float(inner[1])), int(float(inner[2])))
+        except (ValueError, IndexError):
+            return "#FFFFFF"
+    elif text.startswith("rgb"):
+        try:
+            inner = text[text.find("(") + 1 : text.find(")")].split(",")
+            r, g, b = (int(float(inner[0])), int(float(inner[1])), int(float(inner[2])))
+        except (ValueError, IndexError):
+            return "#FFFFFF"
+    elif text.startswith("#"):
+        hex_color = text[1:]
+        if len(hex_color) == 3:
+            hex_color = "".join(ch * 2 for ch in hex_color)
+        if len(hex_color) < 6:
+            return "#FFFFFF"
+        try:
+            r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+        except ValueError:
+            return "#FFFFFF"
+    else:
+        return "#FFFFFF"
+    # Relative luminance — ngưỡng ~0.55 để chữ luôn dễ đọc trên màu chart.
+    luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    return "#0F172A" if luminance > 0.55 else "#FFFFFF"
+
+
+def _trace_marker_colors(trace) -> str | list | None:
+    marker = getattr(trace, "marker", None)
+    if marker is None:
+        return None
+    colors = getattr(marker, "colors", None)
+    if colors is not None:
+        return list(colors)
+    color = getattr(marker, "color", None)
+    if color is None:
+        return None
+    if isinstance(color, (list, tuple)):
+        return list(color)
+    return str(color)
+
+
+def _apply_colored_hoverlabels(fig: go.Figure) -> None:
+    """Nền tooltip = màu giá trị trên chart; chữ tương phản (merge dict để override bordercolor)."""
+    base = _chart_hoverlabel()
+    colorway = list(fig.layout.colorway) if fig.layout.colorway else [
+        "#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A", "#19D3F3", "#FF6692", "#B6E880",
+    ]
+    for index, trace in enumerate(fig.data):
+        colors = _trace_marker_colors(trace)
+        # Pie: một trace nhiều sector — phải gán màu từng lát, không dùng 1 màu cho cả trace.
+        n_points = 0
+        if getattr(trace, "type", None) == "pie":
+            labels = getattr(trace, "labels", None)
+            values = getattr(trace, "values", None)
+            if labels is not None:
+                n_points = len(labels)
+            elif values is not None:
+                n_points = len(values)
+        if n_points > 0 and (colors is None or isinstance(colors, str)):
+            colors = [colorway[i % len(colorway)] for i in range(n_points)]
+            trace.update(marker=dict(colors=colors))
+        elif colors is None:
+            colors = colorway[index % len(colorway)]
+        if isinstance(colors, list):
+            fonts = [_contrast_ink(c) for c in colors]
+            trace.update(
+                hoverlabel={
+                    **base,
+                    "bgcolor": colors,
+                    "font": dict(size=13, color=fonts, family=FONT),
+                }
+            )
+        else:
+            ink = _contrast_ink(colors)
+            trace.update(
+                hoverlabel={
+                    **base,
+                    "bgcolor": colors,
+                    "bordercolor": (
+                        "rgba(255,255,255,0.45)" if ink == "#FFFFFF" else "rgba(15,23,42,0.2)"
+                    ),
+                    "font": dict(size=13, color=ink, family=FONT),
+                }
+            )
 
 
 def _apply_segment_chart_frame(fig, *, height: int, bottom: int = 56, left: int = 56, right: int = 24, top: int = 20) -> None:
@@ -565,6 +973,7 @@ def _apply_segment_chart_frame(fig, *, height: int, bottom: int = 56, left: int 
     fig.update_xaxes(automargin=True, title_standoff=10, tickfont=dict(size=11))
     fig.update_yaxes(automargin=True, title_standoff=10, tickfont=dict(size=11))
     fig.update_layout(hovermode="closest", hoverlabel=_chart_hoverlabel())
+    _apply_colored_hoverlabels(fig)
 
 
 def _sample_customer_map_points(labeled: pd.DataFrame, cap: int = CUSTOMER_MAP_POINT_CAP) -> tuple[pd.DataFrame, bool]:
@@ -595,12 +1004,12 @@ def _build_customer_map_figure(labeled: pd.DataFrame) -> tuple[go.Figure, str]:
     plot_df["recency_plot"] = (
         plot_df["recency"].astype(float) + rng.uniform(-CUSTOMER_MAP_JITTER, CUSTOMER_MAP_JITTER, len(plot_df))
     ).clip(lower=0)
+    plot_df["recency_i"] = plot_df["recency"].astype(float).round(0).astype(int)
+    plot_df["freq_i"] = plot_df["frequency"].astype(float).round(0).astype(int)
+    plot_df["monetary_m"] = (plot_df["monetary"].astype(float) / 1_000_000).round(2)
+    if "customer_id" not in plot_df.columns:
+        plot_df["customer_id"] = "—"
 
-    hover = ["customer_id", "recency", "frequency", "monetary"] if "customer_id" in plot_df.columns else [
-        "recency",
-        "frequency",
-        "monetary",
-    ]
     fig = px.scatter(
         plot_df,
         x="recency_plot",
@@ -615,12 +1024,20 @@ def _build_customer_map_figure(labeled: pd.DataFrame) -> tuple[go.Figure, str]:
             "segment": "Nhóm",
             "frequency": "Frequency",
         },
-        hover_data={col: True for col in hover if col in plot_df.columns},
+        custom_data=["segment", "customer_id", "recency_i", "freq_i", "monetary_m"],
     )
     fig.update_traces(
         marker=dict(
             line=dict(width=0.9, color="rgba(255,255,255,0.95)"),
             opacity=0.62,
+        ),
+        hovertemplate=(
+            "Nhóm %{customdata[0]}<br>"
+            "Mã khách hàng = %{customdata[1]}<br>"
+            "Recency = %{customdata[2]} ngày<br>"
+            "Frequency = %{customdata[3]} lần<br>"
+            "Monetary = %{customdata[4]:.2f} M"
+            "<extra></extra>"
         ),
         selector=dict(mode="markers"),
     )
@@ -649,7 +1066,7 @@ def _build_customer_map_figure(labeled: pd.DataFrame) -> tuple[go.Figure, str]:
             customdata=np.stack([centroids["segment"], centroids["n"]], axis=-1),
             hovertemplate=(
                 "<b>Tâm nhóm</b><br>%{customdata[0]}<br>"
-                "Recency TB: %{x:.1f} ngày<br>"
+                "Recency TB: %{x:.0f} ngày<br>"
                 "Monetary TB: %{y:,.0f} đ<br>"
                 "Số khách: %{customdata[1]:,}<extra></extra>"
             ),
@@ -713,7 +1130,7 @@ def _render_customer_segments(seg: SegmentationResult) -> None:
             textinfo="percent",
             hole=0.38,
             textfont=dict(size=12),
-            hovertemplate="%{label}<br>%{customdata[0]}<br>%{percent}<extra></extra>",
+            hovertemplate="%{label}; %{customdata[0]}<extra></extra>",
         )
         _apply_segment_chart_frame(fig_pie, height=360, bottom=72, left=16, right=16, top=36)
         fig_pie.update_layout(
@@ -745,7 +1162,7 @@ def _render_customer_segments(seg: SegmentationResult) -> None:
         fig_bar.update_traces(
             marker_line_width=0,
             width=0.55,
-            hovertemplate="%{x}<br>%{customdata[0]}<extra></extra>",
+            hovertemplate="%{x}; %{customdata[0]}<extra></extra>",
         )
         _apply_segment_chart_frame(fig_bar, height=360, bottom=96, left=72, right=16, top=16)
         fig_bar.update_xaxes(tickangle=-28, tickfont=dict(size=10), title="")
@@ -890,18 +1307,25 @@ def _render_product_ranking(product_stats: pd.DataFrame, caps, df: pd.DataFrame)
                 y="product_id",
                 orientation="h",
                 labels={"doanh_thu_ty": "Tỷ VNĐ", "product_id": "Sản phẩm"},
+                text="doanh_thu_ty",
             )
             fig.update_yaxes(categoryorder="total ascending", title="")
             fig.update_xaxes(
                 tickformat=".2f",
                 title=dict(text="Tỷ VNĐ", font=dict(size=11)),
             )
+            # Giá trị hiện trên thanh; không dùng tooltip.
             fig.update_traces(
                 marker_line_width=0,
-                hovertemplate="%{y}<br>%{x:.2f} Tỷ VNĐ<extra></extra>",
+                texttemplate="%{x:.2f}",
+                textposition="inside",
+                insidetextanchor="middle",
+                textfont=dict(size=12, color="#FFFFFF"),
+                hoverinfo="none",
+                hovertemplate=None,
             )
-            _apply_segment_chart_frame(fig, height=380, bottom=48, left=96, right=16, top=16)
-            fig.update_layout(showlegend=False, hovermode="closest", hoverlabel=_chart_hoverlabel())
+            _apply_segment_chart_frame(fig, height=380, bottom=48, left=96, right=24, top=16)
+            fig.update_layout(showlegend=False, hovermode=False)
             show_chart(fig)
 
     with col2, st.container(border=True):
@@ -922,6 +1346,10 @@ def _render_product_ranking(product_stats: pd.DataFrame, caps, df: pd.DataFrame)
             else:
                 cat_stats = cat_stats.copy()
                 cat_stats["revenue_ty"] = _to_ty_vnd(cat_stats["revenue"])
+                colorway = [
+                    "#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A", "#19D3F3", "#FF6692", "#B6E880",
+                ]
+                slice_colors = [colorway[i % len(colorway)] for i in range(len(cat_stats))]
                 fig2 = px.pie(
                     cat_stats,
                     names="category",
@@ -932,7 +1360,8 @@ def _render_product_ranking(product_stats: pd.DataFrame, caps, df: pd.DataFrame)
                     textinfo="percent",
                     hole=0.38,
                     textfont=dict(size=12),
-                    hovertemplate="%{label}<br>%{value:.2f} Tỷ VNĐ<br>%{percent}<extra></extra>",
+                    marker=dict(colors=slice_colors),
+                    hovertemplate="%{label}; %{value:.2f}<extra></extra>",
                 )
                 _apply_segment_chart_frame(fig2, height=380, bottom=72, left=16, right=16, top=36)
                 fig2.update_layout(
@@ -947,7 +1376,6 @@ def _render_product_ranking(product_stats: pd.DataFrame, caps, df: pd.DataFrame)
                     ),
                     uniformtext_minsize=10,
                     uniformtext_mode="hide",
-                    hoverlabel=_chart_hoverlabel(),
                 )
                 show_chart(fig2)
 

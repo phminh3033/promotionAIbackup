@@ -46,7 +46,8 @@ def compare_actual_vs_forecast(actual_daily: pd.DataFrame, baseline: DailyBaseli
     Trả về bảng so sánh từng ngày + % chênh lệch so với baseline (âm = thấp hơn dự báo).
     """
     df = actual_daily.copy()
-    df = df.sort_values("date").reset_index(drop=True)
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.normalize()
+    df = df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
     df["day_index"] = range(1, len(df) + 1)
 
     metric_baseline = {
@@ -75,3 +76,79 @@ def cumulative_variance(compared_df: pd.DataFrame, metric: str) -> float | None:
     if total_forecast <= 0:
         return None
     return (total_actual - total_forecast) / total_forecast
+
+
+def resolve_promo_cost(
+    *,
+    actual_cost: float | None = None,
+    expected_promo_cost: float | None = None,
+    budget: float | None = None,
+    forecast: dict | None = None,
+) -> float | None:
+    """Ưu tiên chi phí KM thực tế → chi phí mô phỏng lúc launch → suy từ ROI dự báo → ngân sách."""
+    derived = None
+    if forecast:
+        derived = _derive_promo_cost_from_forecast(forecast)
+    for raw in (actual_cost, expected_promo_cost, derived, budget):
+        try:
+            value = float(raw) if raw is not None else 0.0
+        except (TypeError, ValueError):
+            continue
+        if value > 0 and np.isfinite(value):
+            return value
+    return None
+
+
+def _derive_promo_cost_from_forecast(forecast: dict) -> float | None:
+    """Suy chi phí KM từ ROI dự báo + LN gộp tăng thêm (chiến dịch cũ thiếu expected_promo_cost)."""
+    try:
+        roi_range = forecast.get("expected_roi_range")
+        gp_range = forecast.get("expected_gp_range")
+        no_promo = forecast.get("no_promo_gp_per_day")
+        days = forecast.get("promo_days") or 0
+        if not roi_range or no_promo is None or not days:
+            return None
+        roi_mid = float(sum(roi_range) / 2)
+        if abs(roi_mid) < 1e-12:
+            return None
+        if gp_range:
+            gp_mid = float(sum(gp_range) / 2)
+        else:
+            return None
+        incremental = gp_mid - float(no_promo) * float(days)
+        cost = incremental / roi_mid
+        if cost > 0 and np.isfinite(cost):
+            return float(cost)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    return None
+
+
+def compute_actual_roi(
+    gp_series,
+    *,
+    no_promo_gp_per_day: float | None,
+    promo_cost: float | None,
+) -> float | None:
+    """ROI thực tế = (Σ LN gộp − no_promo_gp/ngày × số ngày có LN) / chi phí KM.
+
+    Chỉ tính trên các ngày có LN gộp hữu hạn — tránh ngày trống làm lệch cực đoan.
+    """
+    if promo_cost is None or promo_cost <= 0 or no_promo_gp_per_day is None:
+        return None
+    try:
+        no_promo = float(no_promo_gp_per_day)
+        cost = float(promo_cost)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(no_promo) or not np.isfinite(cost) or cost <= 0:
+        return None
+
+    gp = pd.to_numeric(pd.Series(gp_series), errors="coerce")
+    if not gp.notna().any():
+        return None
+    days = int(gp.notna().sum())
+    incremental = float(gp.sum(skipna=True)) - no_promo * days
+    if not np.isfinite(incremental):
+        return None
+    return incremental / cost

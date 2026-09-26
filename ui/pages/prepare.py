@@ -20,7 +20,7 @@ from ui.components import (
     readiness_score_card,
     show,
 )
-from ui.formatters import compact_vnd, integer, pct
+from ui.formatters import compact_vnd, format_int_commas, integer, parse_int_commas, pct
 from ui.shell import continue_button, render_shell
 
 STATUS_KIND = {"Đủ hàng": "ok", "Sắp thiếu": "warn", "Thiếu hàng": "bad"}
@@ -76,8 +76,14 @@ def render() -> None:
     profile = st.session_state["business_profile"]
     caps = st.session_state["capabilities"]
     lead, safety, budget, min_margin = _param_controls(profile)
-    profile.promotion_budget = float(budget)
-    profile.min_margin_pct = float(min_margin)
+    if lead is not None and int(lead) >= 1:
+        profile.lead_time_days = int(lead)
+    if safety is not None:
+        profile.safety_stock_days = int(safety)
+    if budget is not None:
+        profile.promotion_budget = float(budget)
+    if min_margin is not None:
+        profile.min_margin_pct = float(min_margin)
 
     if not caps.has_inventory:
         st.warning("Chưa có cột tồn kho. Hệ thống chỉ hiện nhu cầu gần đây, không tính số lượng cần nhập.")
@@ -85,8 +91,13 @@ def render() -> None:
         st.dataframe(demand.sort_values("avg_daily_demand", ascending=False), width="stretch", hide_index=True)
     else:
         if st.button("Tính mức sẵn sàng tồn kho", type="primary", key="run_inv"):
-            with st.spinner("Đang lập kế hoạch tồn kho..."):
-                run_inventory(int(lead), int(safety))
+            if lead is None or safety is None:
+                st.warning(
+                    "Nhập Lead time và Safety stock, hoặc lưu Hồ sơ doanh nghiệp để tự điền trước khi tính."
+                )
+            else:
+                with st.spinner("Đang lập kế hoạch tồn kho..."):
+                    run_inventory(int(lead), int(safety))
 
     plan = st.session_state.get("inventory_plan")
     vm = build_prepare_view_model(plan, profile, caps)
@@ -107,34 +118,196 @@ def _render_empty() -> None:
 
 
 def _param_controls(profile):
+    """Tham số Prepare: mặc định trống; chỉ autofill khi đã lưu/tải Hồ sơ doanh nghiệp."""
+    _restore_prepare_params()
+    _sanitize_prep_lead_session()
+    _seed_prep_from_business_profile(profile)
+
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        lead = st.number_input(
-            "Lead time (ngày)", min_value=1, value=int(profile.lead_time_days), key="prep_lead"
+        st.text_input(
+            "Lead time (ngày)",
+            key="prep_lead_fmt",
+            on_change=_sync_prep_lead,
+            placeholder="",
         )
     with c2:
-        safety = st.number_input(
-            "Safety stock (ngày)", min_value=0, value=int(profile.safety_stock_days), key="prep_safety"
+        st.text_input(
+            "Safety stock (ngày)",
+            key="prep_safety_fmt",
+            on_change=_sync_prep_safety,
+            placeholder="",
         )
     with c3:
-        budget = st.number_input(
-            "Ngân sách khuyến mãi (đ)",
-            min_value=0.0,
-            value=float(profile.promotion_budget),
-            step=1_000_000.0,
-            key="prep_budget",
+        st.text_input(
+            "Ngân sách khuyến mãi (VND)",
+            key="prep_budget_fmt",
+            on_change=_sync_prep_budget,
+            placeholder="",
+            help="Tự thêm dấu phẩy hàng nghìn. Đồng bộ từ Hồ sơ doanh nghiệp khi đã lưu/chỉnh sửa.",
         )
     with c4:
-        min_margin = st.number_input(
+        st.text_input(
             "Margin tối thiểu",
-            min_value=0.0,
-            max_value=0.9,
-            value=float(profile.min_margin_pct),
-            step=0.01,
-            format="%.2f",
-            key="prep_margin",
+            key="prep_margin_fmt",
+            on_change=_sync_prep_margin,
+            placeholder="",
+            help="Tỷ lệ thập phân, vd 0.15 = 15%.",
         )
-    return lead, safety, budget, min_margin
+    _snapshot_prepare_params()
+    return (
+        st.session_state.get("prep_lead"),
+        st.session_state.get("prep_safety"),
+        st.session_state.get("prep_budget"),
+        st.session_state.get("prep_margin"),
+    )
+
+
+def _snapshot_prepare_params() -> None:
+    """Lưu bản sao không phải widget-key — Streamlit xóa widget state khi rời trang Prepare."""
+    st.session_state["prepare_params"] = {
+        "prep_lead": st.session_state.get("prep_lead"),
+        "prep_lead_fmt": st.session_state.get("prep_lead_fmt", ""),
+        "prep_safety": st.session_state.get("prep_safety"),
+        "prep_safety_fmt": st.session_state.get("prep_safety_fmt", ""),
+        "prep_budget": st.session_state.get("prep_budget"),
+        "prep_budget_fmt": st.session_state.get("prep_budget_fmt", ""),
+        "prep_margin": st.session_state.get("prep_margin"),
+        "prep_margin_fmt": st.session_state.get("prep_margin_fmt", ""),
+    }
+
+
+def _restore_prepare_params() -> None:
+    """Khôi phục giá trị đã nhập trước khi tạo lại widget trên trang Prepare."""
+    saved = st.session_state.get("prepare_params")
+    if not isinstance(saved, dict):
+        return
+    for key, value in saved.items():
+        # Chỉ khôi phục khi widget key đã bị Streamlit xóa sau khi navigate.
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+def _sanitize_prep_lead_session() -> None:
+    """Session cũ từ st.number_input(key=prep_lead, min_value=1) có thể còn giá trị 0 → crash.
+
+    Xóa/chuẩn hóa trước mọi widget Prepare; lead hợp lệ phải ≥ 1 hoặc trống (None).
+    """
+    lead = st.session_state.get("prep_lead")
+    if lead is not None:
+        try:
+            lead_i = int(lead)
+        except (TypeError, ValueError):
+            lead_i = 0
+        if lead_i < 1:
+            st.session_state["prep_lead"] = None
+            st.session_state["prep_lead_fmt"] = ""
+
+
+def _seed_prep_from_business_profile(profile) -> None:
+    """Autofill Prepare từ hồ sơ đã Lưu/Tải; seed lại khi hồ sơ đổi."""
+    from src.utils.state import apply_business_profile_to_prepare, prep_profile_fingerprint
+
+    blank = {
+        "prep_lead": None,
+        "prep_lead_fmt": "",
+        "prep_safety": None,
+        "prep_safety_fmt": "",
+        "prep_budget": None,
+        "prep_budget_fmt": "",
+        "prep_margin": None,
+        "prep_margin_fmt": "",
+    }
+    if not st.session_state.get("prep_fields_initialized"):
+        for key, value in blank.items():
+            if key not in st.session_state:
+                st.session_state[key] = value
+        st.session_state["prep_fields_initialized"] = True
+
+    if not st.session_state.get("bp_profile_committed"):
+        return
+
+    # User đang giữ chỉnh tay trên Prepare → không ghi đè.
+    if st.session_state.get("params_authority") == "prep":
+        return
+
+    fp = prep_profile_fingerprint(profile)
+    force = not st.session_state.get("prep_autofilled_from_bp")
+    if not force and st.session_state.get("prep_autofill_fp") == fp:
+        return
+
+    apply_business_profile_to_prepare(profile)
+
+
+def _mark_prep_authority() -> None:
+    st.session_state["params_authority"] = "prep"
+
+
+def _sync_prep_lead() -> None:
+    raw = st.session_state.get("prep_lead_fmt")
+    if not str(raw or "").strip():
+        st.session_state["prep_lead"] = None
+        st.session_state["prep_lead_fmt"] = ""
+        _mark_prep_authority()
+        _snapshot_prepare_params()
+        return
+    value = parse_int_commas(raw, default=0, minimum=0)
+    st.session_state["prep_lead"] = value if value > 0 else None
+    st.session_state["prep_lead_fmt"] = str(value) if value > 0 else ""
+    _mark_prep_authority()
+    _snapshot_prepare_params()
+
+
+def _sync_prep_safety() -> None:
+    raw = st.session_state.get("prep_safety_fmt")
+    if not str(raw or "").strip():
+        st.session_state["prep_safety"] = None
+        st.session_state["prep_safety_fmt"] = ""
+        _mark_prep_authority()
+        _snapshot_prepare_params()
+        return
+    value = parse_int_commas(raw, default=0, minimum=0)
+    st.session_state["prep_safety"] = value
+    st.session_state["prep_safety_fmt"] = str(value)
+    _mark_prep_authority()
+    _snapshot_prepare_params()
+
+
+def _sync_prep_budget() -> None:
+    raw = st.session_state.get("prep_budget_fmt")
+    if not str(raw or "").strip():
+        st.session_state["prep_budget"] = None
+        st.session_state["prep_budget_fmt"] = ""
+        _mark_prep_authority()
+        _snapshot_prepare_params()
+        return
+    value = parse_int_commas(raw, default=0, minimum=0)
+    st.session_state["prep_budget"] = float(value) if value > 0 else None
+    st.session_state["prep_budget_fmt"] = format_int_commas(value) if value > 0 else ""
+    _mark_prep_authority()
+    _snapshot_prepare_params()
+
+
+def _sync_prep_margin() -> None:
+    raw = str(st.session_state.get("prep_margin_fmt") or "").strip().replace(",", ".")
+    if not raw:
+        st.session_state["prep_margin"] = None
+        st.session_state["prep_margin_fmt"] = ""
+        _mark_prep_authority()
+        _snapshot_prepare_params()
+        return
+    try:
+        value = min(0.9, max(0.0, float(raw)))
+    except ValueError:
+        st.session_state["prep_margin"] = None
+        st.session_state["prep_margin_fmt"] = ""
+        _mark_prep_authority()
+        _snapshot_prepare_params()
+        return
+    st.session_state["prep_margin"] = value
+    st.session_state["prep_margin_fmt"] = f"{value:.2f}"
+    _mark_prep_authority()
+    _snapshot_prepare_params()
 
 
 def build_prepare_view_model(plan, profile, caps) -> PrepareViewModel:
@@ -204,7 +377,13 @@ def build_prepare_view_model(plan, profile, caps) -> PrepareViewModel:
         vm.products = products
 
     # —— Budget ——
-    budget = float(profile.promotion_budget or 0)
+    # Ưu tiên ô Prepare; chưa lưu hồ sơ / chưa nhập → coi như chưa thiết lập (không lấy default YAML).
+    if st.session_state.get("prep_budget") is not None:
+        budget = float(st.session_state["prep_budget"])
+    elif st.session_state.get("bp_profile_committed"):
+        budget = float(profile.promotion_budget or 0)
+    else:
+        budget = 0.0
     allocated = _allocated_promo_cost()
     if budget <= 0:
         vm.budget_value = "Chưa thiết lập"
@@ -230,8 +409,8 @@ def build_prepare_view_model(plan, profile, caps) -> PrepareViewModel:
         vm.margin_support = "Chưa thể tính biên lợi nhuận dự kiến."
         margin_score = None
     else:
-        prefix = f"{vm.margin_label} " if vm.margin_label else ""
-        vm.margin_value = f"{prefix}{pct(margin_pct, 1)}".strip()
+        # Chỉ hiện % — không ghép nhãn Healthy/Watch/Risk vào giá trị card.
+        vm.margin_value = pct(margin_pct, 1)
         vm.margin_support = margin_source
         if margin_pct >= float(profile.target_margin_pct):
             margin_score = 1.0
@@ -409,8 +588,8 @@ def _render_view(vm: PrepareViewModel, empty: bool = False) -> None:
     ]
     show(f'<div class="pp-prep-kpi-grid">{"".join(cards)}</div>')
 
-    # ROW 2 — table + summary
-    main, side = st.columns([3, 1], gap="medium")
+    # ROW 2 — table (scroll) + summary; cột cân tỷ lệ ~3:1
+    main, side = st.columns([2.4, 1], gap="medium")
     with main:
         _product_panel(vm, empty=empty)
     with side:
@@ -447,78 +626,70 @@ def _render_view(vm: PrepareViewModel, empty: bool = False) -> None:
 
     # ROW 3 — actions
     st.markdown(f'<p class="pp-prep-cta-note">{esc(vm.cta_note)}</p>', unsafe_allow_html=True)
-    left, spacer, right = st.columns([1.1, 1.5, 1.4])
-    with left:
-        if st.button("Lưu nháp", type="secondary", key="prep_draft", width="stretch"):
-            st.session_state["prepare_draft_saved"] = True
-            st.session_state["prepare_draft"] = {
-                "lead_time_days": st.session_state.get("prep_lead"),
-                "safety_stock_days": st.session_state.get("prep_safety"),
-                "promotion_budget": st.session_state.get("prep_budget"),
-                "min_margin_pct": st.session_state.get("prep_margin"),
-            }
-            st.toast("Đã lưu nháp tham số Prepare trong phiên hiện tại.")
-    with right:
-        continue_button("Tiếp tục sang Simulate →", "simulate", key="prep_next" if not empty else "prep_next_empty")
+    continue_button(
+        "Tiếp tục đến Bước 4: Simulate →",
+        "simulate",
+        key="prep_next" if not empty else "prep_next_empty",
+    )
 
 
 def _product_panel(vm: PrepareViewModel, empty: bool = False) -> None:
-    with st.container(border=True):
-        if empty or not vm.products:
-            show(
-                product_readiness_table(
-                    ["Sản phẩm", "Danh mục", "Tồn kho hiện tại", "Nhu cầu dự báo", "Chênh lệch", "Trạng thái"],
-                    [],
-                    "Sản phẩm trọng tâm",
-                    "Kiểm tra tồn kho và mức độ sẵn sàng cho chiến dịch khuyến mãi",
-                )
-            )
-            if not empty:
-                st.caption("Chưa có kế hoạch tồn kho — bấm tính mức sẵn sàng ở trên.")
-            return
-
-        f1, f2 = st.columns([2, 1])
-        with f1:
-            query = st.text_input(
-                "Tìm kiếm sản phẩm",
-                key="prep_search",
-                label_visibility="collapsed",
-                placeholder="Tìm kiếm sản phẩm...",
-            )
-        with f2:
-            options = ["Tất cả danh mục", *vm.categories]
-            cat = st.selectbox("Danh mục", options, key="prep_cat", label_visibility="collapsed")
-
-        rows_data = vm.products
-        if query:
-            q = query.strip().lower()
-            rows_data = [
-                r for r in rows_data if q in r["product_id"].lower() or q in r["category"].lower()
-            ]
-        if cat and cat != "Tất cả danh mục":
-            rows_data = [r for r in rows_data if r["category"] == cat]
-
-        rows = []
-        for item in rows_data[:40]:
-            status = item["status"]
-            rows.append(
-                [
-                    esc_product(item["product_id"]),
-                    esc_product(item["category"]),
-                    esc_product(integer(item["stock"])),
-                    esc_product(integer(item["demand"])),
-                    gap_cell(item["gap"]),
-                    badge(status, STATUS_KIND.get(status, "muted")),
-                ]
-            )
+    """Bảng trọng tâm: filter cố định phía trên, bảng scroll trong card (không khung đôi)."""
+    if empty or not vm.products:
         show(
             product_readiness_table(
                 ["Sản phẩm", "Danh mục", "Tồn kho hiện tại", "Nhu cầu dự báo", "Chênh lệch", "Trạng thái"],
-                rows,
+                [],
                 "Sản phẩm trọng tâm",
                 "Kiểm tra tồn kho và mức độ sẵn sàng cho chiến dịch khuyến mãi",
             )
         )
+        if not empty:
+            st.caption("Chưa có kế hoạch tồn kho — bấm tính mức sẵn sàng ở trên.")
+        return
+
+    f1, f2 = st.columns([2, 1], gap="small")
+    with f1:
+        query = st.text_input(
+            "Tìm kiếm sản phẩm",
+            key="prep_search",
+            label_visibility="collapsed",
+            placeholder="Tìm kiếm sản phẩm...",
+        )
+    with f2:
+        options = ["Tất cả danh mục", *vm.categories]
+        cat = st.selectbox("Danh mục", options, key="prep_cat", label_visibility="collapsed")
+
+    rows_data = vm.products
+    if query:
+        q = query.strip().lower()
+        rows_data = [
+            r for r in rows_data if q in r["product_id"].lower() or q in r["category"].lower()
+        ]
+    if cat and cat != "Tất cả danh mục":
+        rows_data = [r for r in rows_data if r["category"] == cat]
+
+    rows = []
+    for item in rows_data[:40]:
+        status = item["status"]
+        rows.append(
+            [
+                esc_product(item["product_id"]),
+                esc_product(item["category"]),
+                esc_product(integer(item["stock"])),
+                esc_product(integer(item["demand"])),
+                gap_cell(item["gap"]),
+                badge(status, STATUS_KIND.get(status, "muted")),
+            ]
+        )
+    show(
+        product_readiness_table(
+            ["Sản phẩm", "Danh mục", "Tồn kho hiện tại", "Nhu cầu dự báo", "Chênh lệch", "Trạng thái"],
+            rows,
+            "Sản phẩm trọng tâm",
+            "Kiểm tra tồn kho và mức độ sẵn sàng cho chiến dịch khuyến mãi",
+        )
+    )
 
 
 def esc_product(value) -> str:

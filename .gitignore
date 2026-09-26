@@ -5,6 +5,7 @@ __pycache__/
 .streamlit/secrets.toml
 config/business_profiles/
 config/campaign_log/
+config/session_workspace/
 .env
 ~$*.md
 ~$*.docx

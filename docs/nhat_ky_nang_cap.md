@@ -9,6 +9,107 @@ Mỗi mục cần có: Ngày, Người/Agent thực hiện, Mục tiêu, Thay đ
 
 ---
 
+## 2026-09-27 — Giữ chiến dịch đã triển khai qua reload (đợt #4d)
+
+**Thực hiện bởi:** Phiên làm việc trực tiếp với người dùng.
+
+**Mục tiêu:** F5/reload không làm mất các chiến dịch đã «Bắt đầu» trong `campaign_records`.
+
+**Thay đổi chính:**
+- `save_campaign_record` gọi `save_workspace_now()` ngay sau khi ghi session.
+- `hydrate_session_state` chuẩn hoá map id→`CampaignRecord` (pickle có thể trả dict thuần).
+- `campaign_records` thêm vào `SESSION_RESULT_KEYS`; test roundtrip trong `test_session_persistence.py`.
+
+**Kết quả kiểm thử:** `pytest tests/test_session_persistence.py` 6/6 pass (gồm 2 test mới
+roundtrip + normalize `campaign_records`).
+
+---
+
+## 2026-09-26 (đêm) — Snapshot Simulate → Execute (đợt #4b)
+
+**Thực hiện bởi:** Phiên làm việc trực tiếp với người dùng.
+
+**Mục tiêu:** Giá trị «Thiết lập mô phỏng» phải được lưu khi bấm «Chạy mô phỏng» và tự điền
+vào «Thông tin chiến dịch» ở Execute (không lấy từ widget đang sửa lệch).
+
+**Thay đổi chính:**
+- Module `src/promotion/sim_setup.py`: snapshot `campaign_start/end`, `budget`, discount/margin,
+  scope; helper đọc lại cho Execute / restore form Simulate.
+- `run_simulation` ghi đầy đủ snapshot vào `last_scenario_meta` + `save_workspace_now`.
+- `_align_controls_from_last_simulation` khôi phục đúng ngày/ngân sách đã chạy (không reset về hôm nay).
+- Execute đọc campaign từ meta đã lưu, không từ `sim_period`/`sim_budget` live.
+
+**Kết quả kiểm thử:** (xem mục đợt #4 bên dưới sau khi chạy pytest)
+
+---
+
+## 2026-09-26 (đêm) — Execute page read-only + đồng bộ card (đợt #4)
+
+**Thực hiện bởi:** Phiên làm việc trực tiếp với người dùng (yêu cầu chỉnh UI Execute).
+
+**Mục tiêu:** Hai card hàng trên Execute lệch style so với card hệ thống; user có thể sửa chiến dịch
+tách khỏi Simulate/Decide; bảng công việc quá cao vì click-to-edit Streamlit.
+
+**Thay đổi chính:**
+- `ui/pages/execute.py`: bỏ nút/dialog «Chỉnh sửa»; `execute_campaign` luôn đồng bộ từ
+  `sim_period` / `sim_budget` / `last_scenario_meta` + `last_recommendation_card`.
+- Bảng công việc tạm khóa (HTML read-only, bỏ Thêm/Xóa/sửa ô); caption ghi rõ sẽ mở lại sau.
+- `ui/components.py` + `styles/theme.py`: card Execute dùng `pp-exec-panel pp-card`, icon header
+  xanh `#2563EB` như section hệ thống; hàng task compact (padding ~7px, 5 cột).
+
+**Kết quả kiểm thử:**
+- `pytest`: 72/72 pass (~10.3s), gồm 3 test mới `tests/test_sim_setup_handoff.py`.
+- Snapshot Simulate lưu `campaign_start/end` + `budget` vào `last_scenario_meta` khi «Chạy mô phỏng».
+
+**Bài học / Đề xuất tiếp theo:**
+1. Mở lại chỉnh sửa trạng thái công việc trên bảng task khi cần đồng bộ với Monitor.
+2. Tiếp tục Nhóm A #1 (forecast accuracy tracking) nếu không có yêu cầu UI mới.
+
+---
+
+## 2026-09-27 — Checklist tương tác + cổng launch (đợt #4c)
+
+**Thực hiện bởi:** Phiên làm việc trực tiếp với người dùng.
+
+**Mục tiêu:** Bỏ nút «Xem tất cả» ngoài card; tick checklist cập nhật mức sẵn sàng; phải chọn hết
+mới bật «Bắt đầu chiến dịch».
+
+**Thay đổi:** Checklist dùng `st.checkbox`; «Xem tất cả/Thu gọn» trong header card; readiness =
+số ô đã tick; blocker khi chưa đủ; persist `execute_checklist`.
+
+**Kết quả kiểm thử:** `pytest` 75/75 pass (~11.1s).
+
+---
+
+## 2026-09-26 — Giữ phiên qua reload trình duyệt (đợt #3)
+
+**Thực hiện bởi:** Phiên làm việc trực tiếp với người dùng (yêu cầu giữ data/input/kết quả mô hình khi F5).
+
+**Mục tiêu:** Streamlit mặc định mất toàn bộ `st.session_state` khi reload (WebSocket mới). Người dùng
+cần giữ: dữ liệu đã nạp, form đã nhập, dự báo, mô phỏng khuyến mãi — không phải làm lại từ đầu.
+
+**Thay đổi chính:**
+- Module mới `src/utils/session_persistence.py`: snapshot pickle vào `config/session_workspace/`,
+  định danh workspace bằng cookie `pp_wid` + query param `wid`.
+- Demo dataset (`pharmacity_demo.csv`) không pickle DataFrame nặng — chỉ lưu `data_ref=demo` rồi
+  nạp lại từ `_demo_bundle()` khi hydrate.
+- `init_session_state()` hydrate từ đĩa; `persist_session_inputs()` / `save_workspace_now()` ghi đĩa
+  sau chỉnh form hoặc chạy mô hình (upload, forecast, inventory, simulate, decide).
+- `app.py` gọi hydrate **trước** cổng `DEMO_ACCESS_CODE` để giữ luôn mã truy cập đã xác nhận.
+- Test: `tests/test_session_persistence.py`. Gitignore `config/session_workspace/`.
+
+**Kết quả kiểm thử:**
+- `pytest`: 68/68 pass (~11.6s), gồm 4 test mới trong `tests/test_session_persistence.py`.
+- `scripts/smoke_test_pipeline.py`: pass (~15.5s) với `PYTHONIOENCODING=utf-8`.
+
+**Bài học / Đề xuất tiếp theo:**
+1. Multi-tenant thật (SQLite + auth) vẫn nằm backlog Nhóm B #4 — cookie/`wid` đủ cho demo 1 người.
+2. Upload CSV lớn vẫn pickle nguyên DataFrame — nếu chậm trên Railway free-tier, cân nhắc nén
+   parquet theo workspace thay vì pickle.
+3. Tiếp tục Nhóm A #1 (forecast accuracy tracking) nếu không có yêu cầu UI mới.
+
+---
+
 ## 2026-09-21 (buổi tối) — Mở rộng thành PromotionPilot AI (đợt nâng cấp #2)
 
 **Thực hiện bởi:** Phiên làm việc trực tiếp với người dùng (yêu cầu mở rộng lớn, không phải Skill tự động).

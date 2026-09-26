@@ -38,12 +38,24 @@ class ScientificModelEngine:
     def depth(self, mechanic, unit_cost, price, min_margin_pct, max_discount_pct):
         return max_allowed_depth(mechanic, unit_cost, price, min_margin_pct, max_discount_pct)
 
-    def simulate(self, baseline, historical_uplifts, gift_cost_per_unit, max_discount_overrides):
+    def simulate(
+        self,
+        baseline,
+        historical_uplifts,
+        gift_cost_per_unit,
+        max_discount_overrides,
+        scenarios=None,
+        allowed_mechanics=None,
+        max_discount_pct=0.3,
+    ):
         return simulate_scenarios(
             baseline,
             historical_uplifts=historical_uplifts,
+            scenarios=scenarios,
             gift_cost_per_unit=gift_cost_per_unit,
             max_discount_overrides=max_discount_overrides,
+            allowed_mechanics=allowed_mechanics,
+            max_discount_pct=max_discount_pct,
         )
 
     def score(self, table, objective, current_inventory=None):

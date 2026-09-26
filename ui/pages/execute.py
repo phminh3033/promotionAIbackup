@@ -1,6 +1,6 @@
 """Execute: Campaign Execution Workspace — UI/presentation only.
 
-Dữ liệu lấy từ Decide / Forecast / Prepare / Simulate / execution plan hiện có.
+Thông tin chiến dịch lấy từ Simulate + Decide (read-only).
 Không rerun recommendation/simulation/ML. Không hard-code số liệu mockup.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 import streamlit as st
 
-from src.execution.plan import STATUS_LEVELS, TEAMS, generate_execution_plan
+from src.execution.plan import generate_execution_plan
 from src.learning.campaign_log import CampaignRecord, new_campaign_id, save_campaign_record
 from src.recommendation.campaign import generate_campaign_plan, is_llm_enabled
 from ui.components import (
@@ -26,6 +26,10 @@ from ui.components import (
     muted,
     prelaunch_checklist_card,
     show,
+    task_list_card,
+    task_name_cell,
+    task_owner_badge,
+    task_status_badge,
 )
 from ui.formatters import integer, vnd
 from ui.nav import goto
@@ -42,9 +46,7 @@ TEAM_INITIALS = {
     "PSD / Trading": "TD",
 }
 
-CHECKLIST_VISIBLE = 6
-# Chiều cao cố định 2 card hàng trên — task list scroll bên trong.
-EXEC_TOP_CARD_HEIGHT = 540
+CHECKLIST_SCROLL_HEIGHT = 300
 
 
 @dataclass
@@ -87,13 +89,12 @@ class ExecuteViewModel:
     ready_to_launch: bool = False
     launch_blockers: list[str] = field(default_factory=list)
     has_recommendation: bool = False
-    show_all_checklist: bool = False
 
 
 def render() -> None:
     render_shell(
         "Execute",
-        "Cấu hình chiến dịch, phân công công việc và kiểm tra sẵn sàng trước khi khởi chạy.",
+        "Xem thông tin chiến dịch từ Simulate/Decide, theo dõi công việc và kiểm tra sẵn sàng trước khi khởi chạy.",
         stage=6,
     )
     rec = st.session_state.get("last_recommendation_card")
@@ -128,19 +129,18 @@ def build_execute_view_model(rec) -> ExecuteViewModel:
             )
         )
 
-    completed = sum(1 for t in tasks if t.status == "Hoàn thành")
-    total = len(tasks)
-    percentage = int(round(100.0 * completed / total)) if total else 0
+    checks = _sync_checklist_checks(tasks)
+    completed, total, percentage = checklist_progress(checks, [t.id for t in tasks])
 
     if total == 0:
         message = "Chưa có công việc thực thi. Hệ thống sẽ tạo kế hoạch từ quy tắc D-7…D+7 khi có phương án đã chọn."
     elif percentage >= 100:
-        message = "Chiến dịch đã đáp ứng các điều kiện triển khai theo checklist công việc hiện tại."
+        message = "Chiến dịch đã đáp ứng các điều kiện triển khai theo checklist hiện tại."
     else:
         message = "Hoàn thành các công việc còn lại để sẵn sàng khởi động chiến dịch."
 
     checklist = [
-        {"label": t.name or f"Công việc {i + 1}", "checked": t.status == "Hoàn thành"}
+        {"id": t.id, "label": t.name or f"Công việc {i + 1}", "checked": bool(checks.get(t.id))}
         for i, t in enumerate(tasks)
     ]
 
@@ -162,8 +162,12 @@ def build_execute_view_model(rec) -> ExecuteViewModel:
         except (TypeError, ValueError):
             blockers.append("Ngân sách không hợp lệ.")
 
-    # [BUSINESS RULE giữ nguyên]: chỉ bắt buộc có kế hoạch trước khi launch (logic Execute cũ).
-    # Không tự thêm hard-blocker mới (vd. bắt buộc 100% task xong).
+    # [BUSINESS RULE]: phải tick hết checklist trước khi «Bắt đầu chiến dịch».
+    if total > 0 and completed < total:
+        blockers.append(
+            f"Cần hoàn tất checklist trước khi khởi chạy ({completed}/{total} đã chọn)."
+        )
+
     ready = len(blockers) == 0
 
     return ExecuteViewModel(
@@ -177,12 +181,38 @@ def build_execute_view_model(rec) -> ExecuteViewModel:
         ready_to_launch=ready,
         launch_blockers=blockers,
         has_recommendation=True,
-        show_all_checklist=bool(st.session_state.get("execute_show_all_checklist")),
     )
 
 
+def checklist_progress(checks: dict, task_ids: list[str]) -> tuple[int, int, int]:
+    """(completed, total, percentage) từ map id→checked."""
+    total = len(task_ids)
+    completed = sum(1 for tid in task_ids if checks.get(tid))
+    percentage = int(round(100.0 * completed / total)) if total else 0
+    return completed, total, percentage
+
+
+def _sync_checklist_checks(tasks: list[TaskVM]) -> dict:
+    """Đồng bộ execute_checklist với widget checkbox + danh sách task hiện tại."""
+    checks = dict(st.session_state.get("execute_checklist") or {})
+    valid_ids = {t.id for t in tasks if t.id}
+    for tid in list(checks.keys()):
+        if tid not in valid_ids:
+            checks.pop(tid, None)
+    for t in tasks:
+        if not t.id:
+            continue
+        wkey = f"ex_chk_{t.id}"
+        if wkey in st.session_state:
+            checks[t.id] = bool(st.session_state[wkey])
+        elif t.id not in checks:
+            checks[t.id] = False
+    st.session_state["execute_checklist"] = checks
+    return checks
+
+
 def _campaign_vm(rec, camp: dict) -> CampaignInfoVM:
-    profile = st.session_state.get("business_profile")
+    """Hiển thị read-only — mọi field lấy từ Simulate (meta/budget/period) + Decide (rec)."""
     meta = st.session_state.get("last_scenario_meta") or {}
     local_ctx = st.session_state.get("local_context")
 
@@ -204,23 +234,18 @@ def _campaign_vm(rec, camp: dict) -> CampaignInfoVM:
         promo_days = meta.get("promo_days")
     period_sub = f"Thời gian: {int(promo_days)} ngày" if promo_days else (rec.timing_text or "")
 
-    scope = str(camp.get("scope") or "").strip()
-    if not scope:
-        scope = _default_scope(meta, local_ctx)
+    scope = str(camp.get("scope") or "").strip() or _scope_label_from_simulate(meta, local_ctx)
     scope_sub = ""
-    # Chỉ thêm ghi chú phụ khi không trùng nội dung value (tránh lặp "Phạm vi mô phỏng").
     if local_ctx is not None and getattr(local_ctx, "store_name", "") and str(local_ctx.store_name).strip():
         store = str(local_ctx.store_name).strip()
         if store not in scope:
             scope_sub = f"Cửa hàng: {store}"
-    scope_value = meta.get("scope_value")
+    scope_value = meta.get("scope_value") or meta.get("product_focus_label")
     if scope_value and str(scope_value) not in scope and (not scope_sub or str(scope_value) not in scope_sub):
         note = f"Phạm vi mô phỏng: {scope_value}"
         scope_sub = f"{scope_sub} · {note}" if scope_sub else note
 
     budget_val = camp.get("budget")
-    if budget_val is None and profile is not None:
-        budget_val = profile.promotion_budget
     budget_text = vnd(float(budget_val)) if budget_val is not None else DASH
     budget_sub = ""
     if budget_val is not None and rec.expected_revenue_range:
@@ -254,7 +279,7 @@ def _campaign_vm(rec, camp: dict) -> CampaignInfoVM:
 def _render_empty() -> None:
     fields = "".join(
         [
-            campaign_info_field("Tên chiến dịch", DASH, EMPTY, "megaphone", "purple"),
+            campaign_info_field("Tên chiến dịch", DASH, EMPTY, "megaphone", "blue"),
             campaign_info_field("Thời gian triển khai", EMPTY, "", "calendar", "green"),
             campaign_info_field("Phạm vi áp dụng", DASH, "", "map-pin", "pink"),
             campaign_info_field("Ngân sách dự kiến", DASH, "", "wallet", "orange"),
@@ -266,8 +291,10 @@ def _render_empty() -> None:
         show(campaign_info_card(fields))
     with right:
         show(
-            f'<div class="pp-exec-panel">{exec_panel_header("Danh sách công việc thực thi", "Các đầu việc cần hoàn thành để triển khai chiến dịch", "clipboard-check")}'
-            f"{muted('Chọn phương án ở Decide trước khi tạo kế hoạch thực thi.')}</div>"
+            task_list_card(
+                "",
+                empty_html=muted("Chọn phương án ở Decide trước khi tạo kế hoạch thực thi."),
+            )
         )
     b1, b2 = st.columns(2, gap="medium")
     with b1:
@@ -278,19 +305,11 @@ def _render_empty() -> None:
 
 
 def _render_view(vm: ExecuteViewModel, rec) -> None:
-    if st.session_state.get("simulation_stale"):
-        st.warning(
-            "Một số thay đổi trên Execute (ngân sách / thời gian / phạm vi) có thể làm kết quả "
-            "mô phỏng hiện tại không còn phù hợp. Không tự chạy lại mô hình — hãy xem lại Simulate nếu cần."
-        )
-
     left, right = st.columns([0.42, 0.58], gap="medium")
     with left:
-        with st.container(border=True, height=EXEC_TOP_CARD_HEIGHT):
-            _render_campaign_info(vm)
+        show(_campaign_info_html(vm))
     with right:
-        with st.container(border=True, height=EXEC_TOP_CARD_HEIGHT):
-            _render_task_list(vm)
+        _render_task_list(vm)
 
     b1, b2 = st.columns(2, gap="medium")
     with b1:
@@ -319,14 +338,8 @@ def _render_view(vm: ExecuteViewModel, rec) -> None:
             st.text_area("SMS", plan.sms_copy, height=70, key="ex_sms_copy")
 
 
-def _render_campaign_info(vm: ExecuteViewModel) -> None:
-    head_l, head_r = st.columns([3.2, 1.0])
-    with head_l:
-        show(exec_panel_header("Thông tin chiến dịch", "Tóm tắt các thông tin chính của chiến dịch", "rocket"))
-    with head_r:
-        if st.button("Chỉnh sửa", type="secondary", key="ex_edit_campaign", width="stretch"):
-            _campaign_edit_dialog()
-
+def _campaign_info_html(vm: ExecuteViewModel) -> str:
+    """Card HTML đồng bộ pp-card — không cho chỉnh sửa; nguồn Simulate + Decide."""
     fields = [
         campaign_info_field(
             "Tên chiến dịch",
@@ -335,7 +348,7 @@ def _render_campaign_info(vm: ExecuteViewModel) -> None:
             if vm.campaign.id and vm.campaign.id != "Chưa khởi tạo"
             else (vm.campaign.id or ""),
             "megaphone",
-            "purple",
+            "blue",
         ),
         campaign_info_field(
             "Thời gian triển khai", vm.campaign.period, vm.campaign.period_sub, "calendar", "green"
@@ -352,371 +365,71 @@ def _render_campaign_info(vm: ExecuteViewModel) -> None:
         fields.append(
             campaign_info_field("Phân khúc khách hàng", vm.campaign.segment, "", "users", "purple")
         )
-    show(f'<div class="pp-exec-fields">{"".join(fields)}</div>')
-
-
-@st.dialog("Chỉnh sửa thông tin chiến dịch", width="large")
-def _campaign_edit_dialog() -> None:
-    camp = dict(st.session_state.get("execute_campaign") or {})
-    rec = st.session_state.get("last_recommendation_card")
-    profile = st.session_state["business_profile"]
-
-    start_default = _parse_date(camp.get("start")) or date.today()
-    end_default = _parse_date(camp.get("end")) or start_default
-    budget_default = float(camp.get("budget") if camp.get("budget") is not None else profile.promotion_budget)
-
-    scope_options = _forecast_scope_options()
-    current_scope = str(camp.get("scope") or "").strip()
-    if current_scope and current_scope not in scope_options:
-        # Giữ lựa chọn đang lưu nếu chưa có trong danh sách Forecast (không invent option mới).
-        scope_options = [current_scope] + scope_options
-    if not scope_options:
-        st.warning("Chưa có dữ liệu Forecast để chọn phạm vi. Hãy tải dữ liệu và mở trang Forecast trước.")
-        if st.button("Đóng", key="ex_dlg_close_no_scope"):
-            st.rerun()
-        return
-
-    scope_index = scope_options.index(current_scope) if current_scope in scope_options else 0
-
-    with st.form("ex_campaign_edit_form"):
-        name = st.text_input("Tên chiến dịch", value=str(camp.get("name") or ""))
-        description = st.text_area("Mô tả (tuỳ chọn)", value=str(camp.get("description") or ""), height=80)
-        c1, c2 = st.columns(2)
-        with c1:
-            start = st.date_input("Ngày bắt đầu", value=start_default)
-        with c2:
-            end = st.date_input("Ngày kết thúc", value=end_default)
-        scope = st.selectbox(
-            "Phạm vi áp dụng",
-            scope_options,
-            index=scope_index,
-            help="Danh sách lấy từ cùng nguồn tùy chọn Phạm vi trên trang Forecast (Toàn công ty / Danh mục / SKU).",
-        )
-        budget = st.number_input(
-            "Ngân sách dự kiến (đ)",
-            min_value=0.0,
-            value=float(budget_default),
-            step=1_000_000.0,
-        )
-        st.caption(
-            "Cơ chế ưu đãi lấy từ phương án đã chọn ở Decide và không chỉnh tại đây "
-            f"(hiện tại: {rec.promotion_label if rec else DASH}). "
-            "Muốn đổi cơ chế, hãy quay lại Decide."
-        )
-        st.info(
-            "Đổi ngân sách, thời gian hoặc phạm vi có thể làm giả định mô phỏng không còn phù hợp. "
-            "Hệ thống sẽ đánh dấu kết quả phụ thuộc là stale — không tự chạy lại mô hình."
-        )
-        save = st.form_submit_button("Lưu thay đổi", type="primary", width="stretch")
-
-    if st.button("Hủy", type="secondary", key="ex_dlg_cancel", width="stretch"):
-        st.rerun()
-
-    if save:
-        err = _validate_campaign(name, start, end, budget, scope)
-        if err:
-            st.error(err)
-            st.stop()
-        old = dict(st.session_state.get("execute_campaign") or {})
-        sensitive_changed = (
-            float(old.get("budget") or 0) != float(budget)
-            or str(old.get("start")) != str(start)
-            or str(old.get("end")) != str(end)
-            or str(old.get("scope") or "") != str(scope).strip()
-        )
-        camp["name"] = name.strip()
-        camp["description"] = description.strip()
-        camp["start"] = start.isoformat()
-        camp["end"] = end.isoformat()
-        camp["scope"] = str(scope).strip()
-        camp["budget"] = float(budget)
-        camp["promo_days"] = max(1, (end - start).days + 1)
-        st.session_state["execute_campaign"] = camp
-        profile.promotion_budget = float(budget)
-        if sensitive_changed:
-            st.session_state["simulation_stale"] = True
-        _sync_plan_dataframe()
-        st.rerun()
-
-
-def _validate_campaign(name: str, start: date, end: date, budget: float, scope: str) -> str | None:
-    if not str(name).strip():
-        return "Tên chiến dịch là bắt buộc."
-    if start > end:
-        return "Ngày bắt đầu phải trước hoặc bằng ngày kết thúc."
-    if budget is None or float(budget) < 0:
-        return "Ngân sách phải ≥ 0."
-    if not str(scope).strip():
-        return "Phạm vi áp dụng là bắt buộc."
-    return None
+    return campaign_info_card("".join(fields))
 
 
 def _render_task_list(vm: ExecuteViewModel) -> None:
-    head_l, head_r = st.columns([3.0, 1.2])
-    with head_l:
+    """Bảng công việc tạm khóa chỉnh sửa — chỉ hiển thị HTML gọn."""
+    if not vm.tasks:
         show(
-            exec_panel_header(
-                "Danh sách công việc thực thi",
-                "Các đầu việc cần hoàn thành để triển khai chiến dịch",
-                "clipboard-check",
+            task_list_card(
+                "",
+                empty_html=muted("Chưa có công việc. Hệ thống sẽ tạo kế hoạch từ quy tắc D-7…D+7 khi có phương án."),
             )
         )
-    with head_r:
-        if st.button("+ Thêm công việc", type="secondary", key="ex_add_task", width="stretch"):
-            _add_task()
-
-    if not vm.tasks:
-        show(muted("Chưa có công việc. Bấm «+ Thêm công việc» hoặc tạo từ quy tắc D-7…D+7."))
         if st.button("Tạo kế hoạch từ quy tắc hiện có", type="primary", key="ex_gen_plan"):
             _generate_plan_from_rules()
             st.rerun()
         return
 
-    # Header bảng
-    show(
-        '<div class="pp-exec-grid-head">'
-        "<div>#</div><div>Công việc</div><div>Phụ trách</div>"
-        "<div>Hạn hoàn thành</div><div>Trạng thái</div><div></div>"
-        "</div>"
-    )
+    rows: list[str] = []
     for idx, task in enumerate(vm.tasks, start=1):
-        _render_task_row(task, idx)
-
-    # Neo cuộn xuống cuối khi vừa thêm công việc
-    show('<div id="pp-exec-task-end"></div>')
-    _maybe_scroll_tasks_to_end()
-
-
-def _editing_cell() -> tuple[str, str] | None:
-    raw = st.session_state.get("editing_cell")
-    if not raw or not isinstance(raw, (list, tuple)) or len(raw) != 2:
-        return None
-    return str(raw[0]), str(raw[1])
-
-
-def _set_editing_cell(task_id: str | None, field: str | None = None) -> None:
-    if task_id and field:
-        st.session_state["editing_cell"] = (task_id, field)
-    else:
-        st.session_state["editing_cell"] = None
-
-
-def _render_task_row(task: TaskVM, index: int) -> None:
-    editing = _editing_cell()
-    # Viền rõ từng hàng (Streamlit container border)
-    with st.container(border=True):
-        if task.is_new:
-            st.caption("Mới")
-        c0, c1, c2, c3, c4, c5 = st.columns([0.35, 2.4, 1.45, 1.05, 1.25, 0.65])
-        with c0:
-            st.markdown(f"**{index}**")
-        with c1:
-            _cell_name(task, editing)
-        with c2:
-            _cell_team(task, editing)
-        with c3:
-            _cell_due(task, editing)
-        with c4:
-            _cell_status(task, editing)
-        with c5:
-            st.markdown('<div class="pp-exec-del-btn">', unsafe_allow_html=True)
-            if st.button("Xóa", key=f"ex_del_{task.id}", help="Xóa công việc", width="stretch"):
-                _delete_task(task.id)
-                st.rerun()
-            st.markdown("</div>", unsafe_allow_html=True)
-
-
-def _cell_name(task: TaskVM, editing: tuple[str, str] | None) -> None:
-    if editing == (task.id, "name"):
-        key = f"ex_cell_name_{task.id}"
-        if key not in st.session_state:
-            st.session_state[key] = task.name or ""
-
-        def _save() -> None:
-            val = str(st.session_state.get(key, "")).strip()
-            if not val:
-                st.session_state["ex_cell_error"] = "Tên công việc không được để trống."
-                return
-            _patch_task(task.id, name=val)
-            _set_editing_cell(None)
-            st.session_state.pop("ex_cell_error", None)
-
-        st.text_input(
-            "Tên công việc",
-            key=key,
-            label_visibility="collapsed",
-            placeholder="Nhập tên công việc…",
-            on_change=_save,
+        initials = TEAM_INITIALS.get(task.team) or _initials_from_label(task.team or task.owner)
+        owner_label = task.team or task.owner or DASH
+        due_text = _fmt_date(task.due_date) if task.due_date else DASH
+        row_cls = "pp-exec-grid-row is-new" if task.is_new else "pp-exec-grid-row"
+        rows.append(
+            f'<div class="{row_cls}">'
+            f'<div class="pp-exec-idx">{idx}</div>'
+            f"<div>{task_name_cell(task.name, is_new=task.is_new)}</div>"
+            f"<div>{task_owner_badge(initials, owner_label)}</div>"
+            f'<div class="pp-exec-due">{due_text}</div>'
+            f"<div>{task_status_badge(task.status)}</div>"
+            f"</div>"
         )
-        if st.session_state.get("ex_cell_error"):
-            st.caption(st.session_state["ex_cell_error"])
-        st.caption("Nhấn Enter để lưu")
-        return
-
-    label = task.name.strip() if task.name and task.name.strip() else "Nhập tên công việc…"
-    st.markdown('<div class="pp-exec-cell-btn">', unsafe_allow_html=True)
-    if st.button(label, key=f"ex_clk_name_{task.id}", width="stretch"):
-        _set_editing_cell(task.id, "name")
-        st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-def _cell_team(task: TaskVM, editing: tuple[str, str] | None) -> None:
-    initials = TEAM_INITIALS.get(task.team) or _initials_from_label(task.team or task.owner)
-    owner_label = task.team or task.owner or "Chọn phòng ban…"
-
-    if editing == (task.id, "team"):
-        key = f"ex_cell_team_{task.id}"
-        options = list(TEAMS)
-        if key not in st.session_state:
-            st.session_state[key] = task.team if task.team in options else (options[0] if options else "")
-
-        def _save() -> None:
-            team = st.session_state.get(key) or ""
-            _patch_task(task.id, team=team, owner=f"Phụ trách {team}" if team else "")
-            _set_editing_cell(None)
-
-        st.selectbox("Phòng ban", options, key=key, label_visibility="collapsed", on_change=_save)
-        return
-
-    btn_label = f"{initials} · {owner_label}" if initials else owner_label
-    st.markdown('<div class="pp-exec-cell-btn">', unsafe_allow_html=True)
-    if st.button(btn_label, key=f"ex_clk_team_{task.id}", width="stretch"):
-        _set_editing_cell(task.id, "team")
-        st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-def _cell_due(task: TaskVM, editing: tuple[str, str] | None) -> None:
-    due_text = _fmt_date(task.due_date) if task.due_date else "Chọn ngày…"
-
-    if editing == (task.id, "due"):
-        key = f"ex_cell_due_{task.id}"
-        if key not in st.session_state:
-            st.session_state[key] = task.due_date or date.today()
-
-        def _save() -> None:
-            due = st.session_state.get(key)
-            _patch_task(task.id, due_date=due.isoformat() if due else None)
-            _set_editing_cell(None)
-
-        st.date_input("Hạn", key=key, label_visibility="collapsed", on_change=_save)
-        return
-
-    st.markdown('<div class="pp-exec-cell-btn">', unsafe_allow_html=True)
-    if st.button(due_text, key=f"ex_clk_due_{task.id}", width="stretch"):
-        _set_editing_cell(task.id, "due")
-        st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-def _cell_status(task: TaskVM, editing: tuple[str, str] | None) -> None:
-    if editing == (task.id, "status"):
-        key = f"ex_cell_status_{task.id}"
-        options = list(STATUS_LEVELS)
-        if key not in st.session_state:
-            st.session_state[key] = task.status if task.status in options else options[0]
-
-        def _save() -> None:
-            status = st.session_state.get(key) or options[0]
-            _patch_task(task.id, status=status)
-            _set_editing_cell(None)
-
-        st.selectbox("Trạng thái", options, key=key, label_visibility="collapsed", on_change=_save)
-        return
-
-    kind_map = {
-        "Hoàn thành": "ok",
-        "Đang thực hiện": "warn",
-        "Chưa bắt đầu": "info",
-        "Trễ hạn": "bad",
-    }
-    kind = kind_map.get(task.status, "muted")
-    st.markdown(f'<div class="pp-exec-cell-btn pp-exec-status-btn is-{kind}">', unsafe_allow_html=True)
-    if st.button(task.status or "—", key=f"ex_clk_status_{task.id}", width="stretch"):
-        _set_editing_cell(task.id, "status")
-        st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-def _maybe_scroll_tasks_to_end() -> None:
-    if not st.session_state.pop("ex_scroll_tasks_end", False):
-        return
-    import streamlit.components.v1 as components
-
-    components.html(
-        """
-        <script>
-        (function () {
-          const doc = window.parent.document;
-          const anchor = doc.getElementById('pp-exec-task-end');
-          if (anchor) {
-            anchor.scrollIntoView({behavior: 'smooth', block: 'end'});
-            return;
-          }
-          const wrappers = doc.querySelectorAll('[data-testid="stVerticalBlockBorderWrapper"]');
-          const last = wrappers[wrappers.length - 1];
-          if (last) {
-            const scrollable = last.querySelector('[data-testid="stVerticalBlock"]') || last;
-            scrollable.scrollTop = scrollable.scrollHeight;
-          }
-        })();
-        </script>
-        """,
-        height=0,
-    )
-
-
-def _patch_task(task_id: str, **fields) -> None:
-    tasks = list(st.session_state.get("execute_tasks") or [])
-    for t in tasks:
-        if t.get("id") == task_id:
-            for k, v in fields.items():
-                t[k] = v
-            break
-    st.session_state["execute_tasks"] = tasks
-    if "name" in fields and str(fields.get("name") or "").strip():
-        st.session_state["new_task_ids"] = [
-            i for i in (st.session_state.get("new_task_ids") or []) if i != task_id
-        ]
-    _sync_plan_dataframe()
-
-
-def _delete_task(task_id: str) -> None:
-    tasks = [t for t in (st.session_state.get("execute_tasks") or []) if t.get("id") != task_id]
-    st.session_state["execute_tasks"] = tasks
-    st.session_state["new_task_ids"] = [i for i in (st.session_state.get("new_task_ids") or []) if i != task_id]
-    editing = _editing_cell()
-    if editing and editing[0] == task_id:
-        _set_editing_cell(None)
-    for suffix in ("name", "team", "due", "status"):
-        st.session_state.pop(f"ex_cell_{suffix}_{task_id}", None)
-    _sync_plan_dataframe()
+    show(task_list_card("".join(rows)))
+    st.caption("Danh sách công việc tạm thời chỉ xem — chỉnh sửa sẽ mở lại ở phiên sau.")
 
 
 def _render_checklist(vm: ExecuteViewModel) -> None:
-    show_all = vm.show_all_checklist
-    head_extra = ""
-    total = len(vm.checklist)
-    if total > CHECKLIST_VISIBLE and not show_all:
-        head_extra = "toggle"
-
-    show(
-        prelaunch_checklist_card(
-            vm.checklist,
-            visible_count=CHECKLIST_VISIBLE,
-            show_all=show_all,
+    """Checklist đầy đủ trong vùng cuộn — không còn nút Xem tất cả / Thu gọn."""
+    with st.container(border=True):
+        show(
+            exec_panel_header(
+                "Checklist trước khi khởi động",
+                "Các hạng mục bắt buộc cần hoàn tất",
+                "clipboard-check",
+                "is-blue",
+            )
         )
-    )
-    if head_extra:
-        if st.button(f"Xem tất cả ({total}) →", key="ex_checklist_all", type="secondary"):
-            st.session_state["execute_show_all_checklist"] = True
-            st.rerun()
-    elif show_all and total > CHECKLIST_VISIBLE:
-        if st.button("Thu gọn", key="ex_checklist_less", type="secondary"):
-            st.session_state["execute_show_all_checklist"] = False
-            st.rerun()
-    st.caption("Checklist suy ra từ trạng thái công việc (read-only).")
+        if not vm.tasks:
+            show(muted(EMPTY))
+        else:
+            with st.container(height=CHECKLIST_SCROLL_HEIGHT, border=False):
+                for task in vm.tasks:
+                    _checklist_checkbox(task)
+
+    st.caption("Đánh dấu từng hạng mục khi hoàn tất. Phải chọn hết checklist mới bắt đầu chiến dịch.")
+
+
+def _checklist_checkbox(task: TaskVM) -> None:
+    """Checkbox với nhãn đầy đủ; CSS panel tắt ellipsis của Streamlit."""
+    checks = dict(st.session_state.get("execute_checklist") or {})
+    key = f"ex_chk_{task.id}"
+    if key not in st.session_state:
+        st.session_state[key] = bool(checks.get(task.id, False))
+    label = (task.name or "").strip() or "Công việc"
+    st.checkbox(label, key=key)
 
 
 def _render_actions(vm: ExecuteViewModel, rec) -> None:
@@ -726,8 +439,8 @@ def _render_actions(vm: ExecuteViewModel, rec) -> None:
         if vm.launch_blockers:
             for b in vm.launch_blockers:
                 st.caption(f"• {b}")
-        elif vm.percentage < 100 and vm.total:
-            st.caption("Một số công việc chưa hoàn thành — có thể khởi chạy nhưng nên rà soát checklist.")
+        elif vm.ready_to_launch:
+            st.caption("Đã hoàn tất checklist — có thể bắt đầu chiến dịch.")
     with right:
         c1, c2 = st.columns(2)
         with c1:
@@ -769,39 +482,80 @@ def _render_actions(vm: ExecuteViewModel, rec) -> None:
 
 
 def _ensure_execute_state(rec) -> None:
-    profile = st.session_state["business_profile"]
-    meta = st.session_state.get("last_scenario_meta") or {}
-    local_ctx = st.session_state.get("local_context")
-
-    if "execute_campaign" not in st.session_state or not st.session_state["execute_campaign"]:
-        start = date.today()
-        promo_days = int(meta.get("promo_days") or profile.max_campaign_duration_days or 14)
-        end = start + timedelta(days=max(promo_days, 1) - 1)
-        default_name = f"{rec.promotion_label} — {rec.product_focus}".strip(" —")
-        st.session_state["execute_campaign"] = {
-            "name": default_name,
-            "description": "",
-            "start": start.isoformat(),
-            "end": end.isoformat(),
-            "scope": _default_scope(meta, local_ctx),
-            "budget": float(profile.promotion_budget),
-            "promo_days": promo_days,
-            "draft_id": "",
-        }
+    """Đồng bộ execute_campaign từ Simulate + Decide mỗi lần vào trang (read-only)."""
+    camp = _campaign_dict_from_sources(rec)
+    st.session_state["execute_campaign"] = camp
 
     if "new_task_ids" not in st.session_state:
         st.session_state["new_task_ids"] = []
-    if "editing_cell" not in st.session_state:
-        st.session_state["editing_cell"] = None
+    if "execute_checklist" not in st.session_state:
+        st.session_state["execute_checklist"] = {}
 
-    if "execute_tasks" not in st.session_state or st.session_state["execute_tasks"] is None:
-        # Ưu tiên DataFrame kế hoạch đã có (từ phiên cũ / data_editor).
+    plan_sig = f"{rec.promotion_label}|{rec.product_focus}|{camp.get('start')}|{camp.get('promo_days')}"
+    prev_sig = st.session_state.get("_execute_plan_sig")
+    tasks = st.session_state.get("execute_tasks")
+
+    if tasks is None:
         plan_df = st.session_state.get("last_execution_plan")
         if plan_df is not None and isinstance(plan_df, pd.DataFrame) and not plan_df.empty:
             st.session_state["execute_tasks"] = _tasks_from_dataframe(plan_df)
         else:
-            # Sinh theo quy tắc deterministic hiện có (D-7…D+7) — không invent task giả.
             _generate_plan_from_rules(silent=True)
+    elif prev_sig is not None and prev_sig != plan_sig:
+        # Phương án Decide / thời gian Simulate đổi → tạo lại kế hoạch theo quy tắc.
+        _generate_plan_from_rules(silent=True)
+        _reset_checklist_state()
+
+    st.session_state["_execute_plan_sig"] = plan_sig
+
+
+def _reset_checklist_state() -> None:
+    """Xóa lựa chọn checklist + widget keys khi kế hoạch thực thi đổi."""
+    old = dict(st.session_state.get("execute_checklist") or {})
+    st.session_state["execute_checklist"] = {}
+    st.session_state.pop("execute_show_all_checklist", None)
+    for tid in old:
+        st.session_state.pop(f"ex_chk_{tid}", None)
+
+
+def _campaign_dict_from_sources(rec) -> dict:
+    """Gom field chiến dịch từ snapshot Simulate (last_scenario_meta) + Decide (rec).
+
+    Ưu tiên meta đã lưu khi «Chạy mô phỏng» — không đọc widget form đang sửa.
+    """
+    from src.promotion.sim_setup import budget_from_meta, campaign_window_from_meta, scope_label_from_meta
+
+    profile = st.session_state["business_profile"]
+    meta = st.session_state.get("last_scenario_meta") or {}
+    local_ctx = st.session_state.get("local_context")
+    existing = st.session_state.get("execute_campaign") or {}
+
+    start, end, promo_days = campaign_window_from_meta(
+        meta, fallback_days=int(profile.max_campaign_duration_days or 14)
+    )
+    budget = budget_from_meta(meta, fallback=float(profile.promotion_budget or 0))
+    store = getattr(local_ctx, "store_name", None) if local_ctx is not None else None
+
+    default_name = f"{rec.promotion_label} — {rec.product_focus}".strip(" —")
+    return {
+        "name": default_name,
+        "description": "",
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "scope": scope_label_from_meta(meta, store_name=store),
+        "budget": budget,
+        "promo_days": int(promo_days),
+        "draft_id": existing.get("draft_id") or "",
+    }
+
+
+def _period_from_simulate(meta: dict, profile) -> tuple[date, date, int]:
+    """Thời gian chiến dịch từ snapshot Simulate (campaign_start/end), không từ widget live."""
+    from src.promotion.sim_setup import campaign_window_from_meta
+
+    return campaign_window_from_meta(
+        meta, fallback_days=int(getattr(profile, "max_campaign_duration_days", None) or 14)
+    )
 
 
 def _generate_plan_from_rules(*, silent: bool = False) -> None:
@@ -834,7 +588,7 @@ def _generate_plan_from_rules(*, silent: bool = False) -> None:
         )
     st.session_state["execute_tasks"] = rows
     st.session_state["new_task_ids"] = []
-    st.session_state["editing_cell"] = None
+    _reset_checklist_state()
     _sync_plan_dataframe()
 
     if st.session_state.get("last_campaign_plan") is None:
@@ -847,103 +601,14 @@ def _generate_plan_from_rules(*, silent: bool = False) -> None:
         st.toast("Đã tạo kế hoạch thực thi từ quy tắc D-7…D+7.")
 
 
-def _forecast_scope_options() -> list[str]:
-    """Options Phạm vi — cùng nguồn với trang Forecast (Toàn công ty / Danh mục / SKU)."""
-    options: list[str] = ["Toàn công ty"]
-    df = st.session_state.get("clean_df")
-    caps = st.session_state.get("capabilities")
-    if df is None or getattr(df, "empty", True):
-        # Vẫn ưu tiên lựa chọn gần nhất trên Forecast nếu còn trong session widget state.
-        last = _forecast_scope_from_session()
-        return [last] if last and last not in options else options
+def _scope_label_from_simulate(meta: dict, local_ctx) -> str:
+    """Nhãn phạm vi từ snapshot Simulate — ủy thác helper dùng chung."""
+    from src.promotion.sim_setup import scope_label_from_meta
 
-    if caps is not None and getattr(caps, "has_category", False) and "category" in df.columns:
-        for cat in sorted(df["category"].dropna().unique()):
-            label = f"Theo Danh mục · {cat}"
-            if label not in options:
-                options.append(label)
-
-    if "product_id" in df.columns and "revenue" in df.columns:
-        top = df.groupby("product_id")["revenue"].sum().sort_values(ascending=False).index.tolist()
-        for sku in top[:50]:  # giới hạn UI; cùng logic top-revenue như Forecast
-            label = f"Theo SKU · {sku}"
-            if label not in options:
-                options.append(label)
-    elif "product_id" in df.columns:
-        for sku in sorted(df["product_id"].dropna().unique().tolist())[:50]:
-            label = f"Theo SKU · {sku}"
-            if label not in options:
-                options.append(label)
-
-    last = _forecast_scope_from_session()
-    if last and last not in options:
-        options.insert(1, last)
-    return options
-
-
-def _forecast_scope_from_session() -> str | None:
-    """Lấy phạm vi đang chọn trên Forecast (widget keys fc_scope / fc_cat / fc_sku) nếu có."""
-    scope = st.session_state.get("fc_scope")
-    if not scope:
-        return None
-    if scope == "Toàn công ty":
-        return "Toàn công ty"
-    if scope == "Theo Danh mục":
-        cat = st.session_state.get("fc_cat")
-        return f"Theo Danh mục · {cat}" if cat is not None and str(cat).strip() else "Theo Danh mục"
-    if scope == "Theo SKU":
-        sku = st.session_state.get("fc_sku")
-        return f"Theo SKU · {sku}" if sku is not None and str(sku).strip() else "Theo SKU"
-    return str(scope)
-
-
-def _default_scope(meta: dict, local_ctx) -> str:
-    # Ưu tiên phạm vi đang chọn trên Forecast (cùng nguồn dropdown chỉnh sửa).
-    forecast_scope = _forecast_scope_from_session()
-    if forecast_scope:
-        return forecast_scope
-    options = _forecast_scope_options()
-    if options:
-        return options[0]
-    if local_ctx is not None and getattr(local_ctx, "store_name", "") and str(local_ctx.store_name).strip():
-        return str(local_ctx.store_name).strip()
-    scope = meta.get("scope")
-    scope_value = meta.get("scope_value")
-    parts = [p for p in [scope, scope_value] if p]
-    if parts:
-        return " · ".join(str(p) for p in parts)
-    product = meta.get("product_focus_label")
-    if product:
-        return str(product)
-    return "Toàn công ty"
-
-
-def _add_task() -> None:
-    # Đóng cell đang edit (nếu có)
-    _set_editing_cell(None)
-
-    task_id = str(uuid.uuid4())
-    tasks = list(st.session_state.get("execute_tasks") or [])
-    tasks.append(
-        {
-            "id": task_id,
-            "name": "",
-            "owner": "",
-            "team": TEAMS[0] if TEAMS else "",
-            "due_date": None,
-            "status": "Chưa bắt đầu",
-            "priority": "Trung bình",
-        }
-    )
-    st.session_state["execute_tasks"] = tasks
-    new_ids = list(st.session_state.get("new_task_ids") or [])
-    new_ids.append(task_id)
-    st.session_state["new_task_ids"] = new_ids
-    # Mở ô tên trống để nhập ngay + cuộn xuống cuối
-    _set_editing_cell(task_id, "name")
-    st.session_state["ex_scroll_tasks_end"] = True
-    _sync_plan_dataframe()
-    st.rerun()
+    store = None
+    if local_ctx is not None and getattr(local_ctx, "store_name", ""):
+        store = str(local_ctx.store_name).strip() or None
+    return scope_label_from_meta(meta, store_name=store)
 
 
 def _tasks_from_dataframe(df: pd.DataFrame) -> list[dict]:
@@ -1013,10 +678,27 @@ def _persist_campaign(rec) -> None:
     promo_days = camp.get("promo_days") or meta.get("promo_days")
     scenario_table = st.session_state.get("last_scenario_table")
     no_promo_gp_per_day = None
+    expected_promo_cost = None
     if scenario_table is not None and promo_days:
         no_promo_rows = scenario_table[scenario_table["mechanic"] == "no_promo"]
         if not no_promo_rows.empty:
             no_promo_gp_per_day = float(no_promo_rows.iloc[0]["loi_nhuan_gop"]) / promo_days
+        # Chi phí KM của cơ chế đã chọn (Decide) — fallback khi Monitor chưa nhập cost.
+        selected = st.session_state.get("selected_mechanic")
+        chosen = scenario_table
+        if selected:
+            hit = scenario_table[scenario_table["mechanic"] == selected]
+            if not hit.empty:
+                chosen = hit
+        else:
+            chosen = scenario_table[scenario_table["mechanic"] != "no_promo"]
+        if not chosen.empty and "chi_phi_khuyen_mai" in chosen.columns:
+            try:
+                cost_val = float(chosen.iloc[0]["chi_phi_khuyen_mai"])
+                if cost_val > 0:
+                    expected_promo_cost = cost_val
+            except (TypeError, ValueError):
+                expected_promo_cost = None
 
     _sync_plan_dataframe()
     record = CampaignRecord(
@@ -1035,6 +717,7 @@ def _persist_campaign(rec) -> None:
             "promo_days": promo_days,
             "scope": camp.get("scope"),
             "budget": camp.get("budget"),
+            "expected_promo_cost": expected_promo_cost,
             "no_promo_gp_per_day": no_promo_gp_per_day,
         },
         roi_forecast=sum(rec.expected_roi_range) / 2 if rec.expected_roi_range else None,

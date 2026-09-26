@@ -52,11 +52,17 @@ class LocalContext:
 
     def has_any_context(self) -> bool:
         return bool(
-            self.business_events or self.customer_contexts or self.store_contexts or self.free_text.strip()
+            (self.store_name or "").strip()
+            or self.business_events
+            or self.customer_contexts
+            or self.store_contexts
+            or self.free_text.strip()
         )
 
     def summary_text(self) -> str:
         parts = []
+        if (self.store_name or "").strip():
+            parts.append("Cửa hàng/khu vực: " + self.store_name.strip())
         if self.business_events:
             parts.append("Sự kiện: " + ", ".join(self.business_events))
         if self.customer_contexts:

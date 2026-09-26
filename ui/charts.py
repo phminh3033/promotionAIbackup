@@ -170,16 +170,19 @@ def actual_vs_forecast_overlay(
     forecast_name: str = "Dự báo",
     height: int = 360,
 ):
-    """Hai series cùng kỳ (Monitor) — không dùng divider Quá khứ|Dự báo của Forecast."""
+    """Hai series cùng kỳ (Monitor) — trục X theo ngày (không tick theo giờ)."""
+    import pandas as pd
+
     fig = go.Figure()
-    x = list(dates)
+    # Chuẩn hoá về ngày lịch — tránh Plotly tự chia tick theo giờ khi Timestamp có time.
+    x = pd.to_datetime(list(dates), errors="coerce").normalize()
     fig.add_trace(
         go.Scatter(
             x=x,
             y=list(actual_y),
             name=actual_name,
             mode="lines+markers",
-            line=dict(color=ACTUAL, width=2.5, shape="spline"),
+            line=dict(color=ACTUAL, width=2.5, shape="linear"),
             marker=dict(size=7, color=ACTUAL, line=dict(width=1.5, color="white")),
             fill="tozeroy",
             fillcolor="rgba(37,99,235,0.08)",
@@ -196,6 +199,13 @@ def actual_vs_forecast_overlay(
         )
     )
     apply_plotly_theme(fig, y_title=y_title, height=height, title=title)
+    fig.update_xaxes(
+        type="date",
+        tickformat="%d/%m/%Y",
+        dtick=86_400_000,  # 1 ngày (ms) — không chia 00:00 / 06:00 / 12:00
+        hoverformat="%d/%m/%Y",
+        ticklabelmode="period",
+    )
     return fig
 
 
