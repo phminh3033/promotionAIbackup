@@ -24,7 +24,10 @@ section[data-testid="stSidebar"] > div {
   padding-top: 0.15rem;
 }
 [data-testid="stHeadingActionElements"], .stHeadingAction { display: none !important; }
-[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] { display: none; }
+/* Desktop: giữ sidebar luôn mở — không hiện nút đóng. Mobile: hiện lại (xem @media). */
+@media (min-width: 721px) {
+  [data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] { display: none; }
+}
 
 section[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"],
 section[data-testid="stSidebar"] a {
@@ -79,7 +82,32 @@ section[data-testid="stSidebar"] a[aria-current="page"]:hover {
 
 .pp-head { margin-bottom: 8px; }
 .pp-head-top { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 4px; }
+.pp-eyebrow-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .pp-eyebrow { color: #64748B; font-size: 13px; margin-bottom: 2px; }
+/* Nút mở left menu — chỉ hiện trên điện thoại (xem @media max-width: 720px). */
+.pp-menu-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  margin: 0;
+  border-radius: 10px;
+  border: 1px solid #E2E8F0;
+  background: #FFFFFF;
+  color: #0F172A;
+  box-shadow: 0 1px 2px rgba(15,23,42,0.06);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.pp-menu-btn:hover, .pp-menu-btn:focus-visible {
+  background: #F8FAFC;
+  border-color: #CBD5E1;
+  outline: none;
+}
+.pp-menu-btn .pp-icon { width: 20px; height: 20px; }
 .pp-head h1 { margin: 0; font-size: 32px; line-height: 1.25; font-weight: 700; color: #0F172A; letter-spacing: -0.02em; overflow-wrap: anywhere; }
 .pp-sub { margin: 6px 0 0 0; color: #475569; font-size: 16px; line-height: 1.5; max-width: 760px; }
 .pp-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
@@ -327,6 +355,20 @@ section[data-testid="stSidebar"] a[aria-current="page"]:hover {
   .pp-kpi-grid, .pp-grid-3, .pp-grid-2, .pp-grid-4 { grid-template-columns: 1fr; }
   .pp-head h1 { font-size: 24px; }
   .pp-actions { flex-direction: column; align-items: stretch; }
+  /* Điện thoại: ẩn thanh 7 bước (chồng chữ), hiện nút mở left menu. */
+  .pp-stagebar { display: none !important; }
+  .pp-menu-btn { display: inline-flex; }
+  [data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] {
+    display: flex !important;
+  }
+  /* Ẩn chevron mặc định của Streamlit — dùng .pp-menu-btn thay thế. */
+  [data-testid="stSidebarCollapsedControl"] {
+    opacity: 0 !important;
+    pointer-events: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    overflow: hidden !important;
+  }
 }
 div[data-testid="stButton"] > button, button[data-testid="stBaseButton-primary"], button[data-testid="stBaseButton-secondary"] {
   border-radius: 12px; font-weight: 600; border: 1px solid transparent;

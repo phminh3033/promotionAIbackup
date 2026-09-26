@@ -64,11 +64,15 @@ def render_shell(title: str, subtitle: str, stage: int | None = None, eyebrow: s
     _sidebar()
     chips = _chips()
     stage_html = _stages(stage) if stage is not None else ""
+    menu_icon = icon("menu", 20)
     st.html(
         f"""
 <div class="pp-head">
   <div class="pp-head-top">
-    <div class="pp-eyebrow">{escape(eyebrow)}</div>
+    <div class="pp-eyebrow-row">
+      <div class="pp-menu-btn" role="button" tabindex="0" aria-label="Mở menu điều hướng">{menu_icon}</div>
+      <div class="pp-eyebrow">{escape(eyebrow)}</div>
+    </div>
     <div class="pp-chips">{chips}</div>
   </div>
   <h1>{escape(title)}</h1>
@@ -77,6 +81,7 @@ def render_shell(title: str, subtitle: str, stage: int | None = None, eyebrow: s
 {stage_html}
 """
     )
+    _wire_mobile_menu()
 
 
 def _chips() -> str:
@@ -123,6 +128,56 @@ def _sidebar() -> None:
 </div>
 """
         )
+
+
+def _wire_mobile_menu() -> None:
+    """Nối nút hamburger (chỉ hiện trên mobile) với toggle sidebar gốc của Streamlit."""
+    import streamlit.components.v1 as components
+
+    components.html(
+        """
+<script>
+(function () {
+  var doc = window.parent.document;
+  if (doc.documentElement.dataset.ppMenuWired === "1") return;
+  doc.documentElement.dataset.ppMenuWired = "1";
+  doc.addEventListener("click", function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var btn = t.closest(".pp-menu-btn");
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var sidebar = doc.querySelector('section[data-testid="stSidebar"]');
+    var collapse = doc.querySelector(
+      '[data-testid="stSidebarCollapseButton"] button, [data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"]'
+    );
+    var expand = doc.querySelector(
+      '[data-testid="stSidebarCollapsedControl"] button, [data-testid="stSidebarCollapsedControl"]'
+    );
+    var open = false;
+    if (sidebar) {
+      var aria = sidebar.getAttribute("aria-expanded");
+      var w = 0;
+      try { w = sidebar.getBoundingClientRect().width; } catch (err) {}
+      open = aria === "true" || w > 40;
+    }
+    if (open && collapse) { collapse.click(); return; }
+    if (expand) expand.click();
+  }, true);
+  doc.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    var t = e.target;
+    if (!t || !t.classList || !t.classList.contains("pp-menu-btn")) return;
+    e.preventDefault();
+    t.click();
+  }, true);
+})();
+</script>
+""",
+        height=0,
+        width=0,
+    )
 
 
 def continue_button(label: str, target: str, key: str) -> None:
