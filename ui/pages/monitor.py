@@ -31,7 +31,7 @@ from ui.components import (
 )
 from ui.formatters import format_int_commas, integer, parse_int_commas, pct, roi_label, signed_pct, vnd
 from ui.nav import goto
-from ui.shell import render_shell
+from ui.shell import back_button, render_shell
 
 # Metric chart: chỉ các cột có trong compared dataframe (actual + forecast).
 CHART_METRICS = [
@@ -262,10 +262,10 @@ def _render_view(vm: MonitorViewModel, record, compared) -> None:
         save_campaign_record(record)
         st.success("Đã lưu đánh giá cho chiến dịch này.")
 
-    _, cta = st.columns([2.2, 1.0])
-    with cta:
-        if st.button("Xuất báo cáo →", type="primary", key="mon_export", width="stretch"):
-            goto("reports")
+    st.markdown('<div class="pp-continue-row" aria-hidden="true"></div>', unsafe_allow_html=True)
+    if st.button("Xuất báo cáo →", type="primary", key="mon_export", width="stretch"):
+        goto("reports")
+    back_button("execute", key="mon_back")
 
 
 def _render_chart_panel(vm: MonitorViewModel, compared) -> None:

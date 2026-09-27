@@ -214,7 +214,12 @@ def _cards() -> None:
 
 
 def _bottom_actions() -> None:
-    continue_button("Tiếp tục đến Bước 2: Forecast →", "forecast", key="und_next")
+    continue_button(
+        "Tiếp tục đến Bước 2: Forecast →",
+        "forecast",
+        key="und_next",
+        back_to="command",
+    )
 
 
 def _open_detail(card_id: str) -> None:

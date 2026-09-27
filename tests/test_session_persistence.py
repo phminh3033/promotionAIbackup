@@ -21,10 +21,45 @@ from src.utils.session_persistence import (
 
 
 def test_sanitize_workspace_id():
+    from src.utils.session_persistence import DEFAULT_WORKSPACE_ID
+
     assert sanitize_workspace_id("abc12345") == "abc12345"
+    assert sanitize_workspace_id(DEFAULT_WORKSPACE_ID) == DEFAULT_WORKSPACE_ID
+    assert sanitize_workspace_id("default") is None  # quá ngắn / không phải id chuẩn
     assert sanitize_workspace_id("../etc/passwd") is None
     assert sanitize_workspace_id("short") is None
     assert sanitize_workspace_id(None) is None
+
+
+def test_default_workspace_roundtrip_survives_reload_without_cookie(tmp_path, monkeypatch):
+    """Mô phỏng F5 không cookie/`wid`: luôn đọc cùng pp_default.pkl."""
+    from src.utils.session_persistence import DEFAULT_WORKSPACE_ID
+
+    monkeypatch.setattr(
+        "src.utils.session_persistence.WORKSPACE_DIR",
+        tmp_path / "ws_default",
+    )
+    session = {
+        "raw_filename": "pharmacity_demo.csv",
+        "objective": "REVENUE",
+        "prep_lead": 7,
+        "forecast_cache": {"k": "v"},
+        "clean_df": pd.DataFrame({"a": [1]}),
+        "mapped_df": pd.DataFrame({"a": [1]}),
+        "raw_df": pd.DataFrame({"a": [1]}),
+    }
+    snap = build_snapshot(session)
+    assert snap["data_ref"] == "demo"
+    save_snapshot(DEFAULT_WORKSPACE_ID, snap)
+
+    loaded = load_snapshot(DEFAULT_WORKSPACE_ID)
+    assert loaded is not None
+    restored: dict = {"raw_filename": "pharmacity_demo.csv"}
+    # apply_snapshot với demo cần bundle — chỉ kiểm tra state nhẹ khi không có demo file
+    state = loaded["state"]
+    assert state["objective"] == "REVENUE"
+    assert state["prep_lead"] == 7
+    assert state["forecast_cache"] == {"k": "v"}
 
 
 def test_build_and_apply_snapshot_roundtrip(tmp_path, monkeypatch):

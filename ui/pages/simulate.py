@@ -22,7 +22,7 @@ from ui.components import (
     simulation_setup_header,
 )
 from ui.formatters import compact_vnd, format_int_commas, integer, parse_int_commas, roi_label, signed_pct
-from ui.shell import continue_button, render_shell
+from ui.shell import back_button, continue_button, render_shell
 
 RISK_KIND = {"Thấp": "ok", "Trung bình": "warn", "Cao": "bad"}
 LETTER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -563,10 +563,11 @@ def _actions(*, ready: bool, views: list[dict], empty_key: bool = False) -> None
     key = "sim_next_empty" if empty_key else "sim_next"
     label = "Tiếp tục đến Bước 5: Decide →"
     if ready and selected_view and not selected_view["rejected"]:
-        continue_button(label, "decide", key=key)
+        continue_button(label, "decide", key=key, back_to="prepare")
     else:
         st.markdown('<div class="pp-continue-row" aria-hidden="true"></div>', unsafe_allow_html=True)
         st.button(label, type="primary", key=key, width="stretch", disabled=True)
+        back_button("prepare", key=f"{key}_back")
         if ready and selected_view and selected_view["rejected"]:
             st.caption("Phương án đang chọn không khả thi — hãy chọn phương án khác.")
         elif ready and not selected:

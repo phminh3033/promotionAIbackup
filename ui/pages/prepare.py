@@ -630,6 +630,7 @@ def _render_view(vm: PrepareViewModel, empty: bool = False) -> None:
         "Tiếp tục đến Bước 4: Simulate →",
         "simulate",
         key="prep_next" if not empty else "prep_next_empty",
+        back_to="forecast",
     )
 
 

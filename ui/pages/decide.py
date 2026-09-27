@@ -19,7 +19,7 @@ from ui.components import (
 )
 from ui.formatters import integer, roi_label, signed_pct, vnd
 from ui.nav import goto
-from ui.shell import render_shell
+from ui.shell import back_button, render_shell
 
 RISK_KIND = {"Thấp": "ok", "Trung bình": "warn", "Cao": "bad"}
 
@@ -234,15 +234,15 @@ def _render_view(vm: DecideViewModel) -> None:
     with right:
         show(tradeoff_list_panel("Đánh đổi cần lưu ý", vm.tradeoffs))
 
-    _, right = st.columns([1.2, 1.4])
-    with right:
-        if vm.can_accept:
-            if st.button("Chọn phương án này →", type="primary", key="dec_accept", width="stretch"):
-                build_decision(st.session_state.get("selected_mechanic"))
-                goto("execute")
-        else:
-            st.button("Chọn phương án này →", type="primary", key="dec_accept", width="stretch", disabled=True)
-            st.caption("Phương án hiện tại bị ràng buộc loại — hãy chọn phương án khác ở Simulate.")
+    st.markdown('<div class="pp-continue-row" aria-hidden="true"></div>', unsafe_allow_html=True)
+    if vm.can_accept:
+        if st.button("Chọn phương án này →", type="primary", key="dec_accept", width="stretch"):
+            build_decision(st.session_state.get("selected_mechanic"))
+            goto("execute")
+    else:
+        st.button("Chọn phương án này →", type="primary", key="dec_accept", width="stretch", disabled=True)
+        st.caption("Phương án hiện tại bị ràng buộc loại — hãy chọn phương án khác ở Simulate.")
+    back_button("simulate", key="dec_back")
 
 
 def _empty_decision() -> None:
@@ -267,6 +267,6 @@ def _empty_decision() -> None:
         show(reason_list_panel("Lý do đề xuất", []))
     with right:
         show(tradeoff_list_panel("Đánh đổi cần lưu ý", []))
-    _, right = st.columns([1.2, 1.4])
-    with right:
-        st.button("Chọn phương án này →", type="primary", key="dec_accept_empty", disabled=True, width="stretch")
+    st.markdown('<div class="pp-continue-row" aria-hidden="true"></div>', unsafe_allow_html=True)
+    st.button("Chọn phương án này →", type="primary", key="dec_accept_empty", disabled=True, width="stretch")
+    back_button("simulate", key="dec_back_empty")

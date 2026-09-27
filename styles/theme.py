@@ -361,7 +361,9 @@ section[data-testid="stSidebar"] a[aria-current="page"]:hover {
   [data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] {
     display: flex !important;
   }
-  /* Ẩn chevron mặc định của Streamlit — dùng .pp-menu-btn thay thế. */
+  /* Ẩn nút expand mặc định của Streamlit — dùng .pp-menu-btn thay thế.
+     Streamlit 1.64: stExpandSidebarButton (cũ: stSidebarCollapsedControl). */
+  [data-testid="stExpandSidebarButton"],
   [data-testid="stSidebarCollapsedControl"] {
     opacity: 0 !important;
     pointer-events: none !important;
@@ -569,6 +571,37 @@ div[data-testid="stElementContainer"]:has(.pp-continue-row) + div[data-testid="s
   border-radius: 999px !important;
   justify-content: center !important;
   font-weight: 600 !important;
+}
+/* Nút trở lại — ngay dưới continue, nhỏ hơn và ít nổi bật hơn. */
+.pp-back-row {
+  margin: 0;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+div[data-testid="stElementContainer"]:has(.pp-back-row) + div[data-testid="stElementContainer"] {
+  width: 100%;
+  max-width: 100%;
+  margin-top: 6px !important;
+}
+div[data-testid="stElementContainer"]:has(.pp-back-row) + div[data-testid="stElementContainer"] button,
+div[data-testid="stElementContainer"]:has(.pp-back-row) + div[data-testid="stElementContainer"] button[data-testid="stBaseButton-secondary"] {
+  width: 100% !important;
+  min-height: 36px !important;
+  max-width: 100% !important;
+  border-radius: 999px !important;
+  justify-content: center !important;
+  font-weight: 500 !important;
+  font-size: 13px !important;
+  color: #64748B !important;
+  background: transparent !important;
+  border: 1px solid #E2E8F0 !important;
+  box-shadow: none !important;
+}
+div[data-testid="stElementContainer"]:has(.pp-back-row) + div[data-testid="stElementContainer"] button:hover {
+  background: #F8FAFC !important;
+  color: #475569 !important;
+  border-color: #CBD5E1 !important;
 }
 
 @media (max-width: 1100px) {

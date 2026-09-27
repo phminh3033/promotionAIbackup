@@ -507,7 +507,12 @@ def _page_actions(*, detail_key: str, next_key: str) -> None:
     st.markdown('<div class="pp-page-actions"></div>', unsafe_allow_html=True)
     if st.button("Xem chi tiết phân tích →", type="secondary", key=detail_key, width="stretch"):
         _dlg_forecast_detail()
-    continue_button("Tiếp tục đến Bước 3: Prepare →", "prepare", key=next_key)
+    continue_button(
+        "Tiếp tục đến Bước 3: Prepare →",
+        "prepare",
+        key=next_key,
+        back_to="understand",
+    )
 
 
 @st.dialog("Chi tiết phân tích & bảng backtest", width="large")

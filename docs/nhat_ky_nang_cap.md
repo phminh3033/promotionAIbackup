@@ -81,7 +81,22 @@ số ô đã tick; blocker khi chưa đủ; persist `execute_checklist`.
 
 ---
 
-## 2026-09-26 — Giữ phiên qua reload trình duyệt (đợt #3)
+## 2026-09-27 — Sửa mất dữ liệu sau F5 trên Railway
+
+**Thực hiện bởi:** Phiên trực tiếp (user báo https://promotionai.up.railway.app reload là mất data).
+
+**Nguyên nhân trong source:**
+1. `resolve_workspace_id()` tạo **UUID mới** khi thiếu cookie/`?wid=` → snapshot cũ mồ côi trên đĩa.
+2. Cookie ghi bằng `components.html` trên `document` của **iframe**, không phải trang cha → F5
+   trình duyệt không gửi lại `pp_wid`.
+3. Id dự phòng `"default"` (7 ký tự) bị `sanitize` loại (≥8) nên không ổn định.
+
+**Sửa:** fallback cố định `pp_default`; mirror snapshot sang `pp_default`; cookie qua
+`parent.document.cookie`; bỏ qua khóa không pickle được + log lỗi thay vì nuốt im.
+
+**Kết quả kiểm thử:** `pytest` 88/88 pass (~16.8s), gồm 7 test `test_session_persistence.py`.
+
+---
 
 **Thực hiện bởi:** Phiên làm việc trực tiếp với người dùng (yêu cầu giữ data/input/kết quả mô hình khi F5).
 

@@ -33,7 +33,7 @@ from ui.components import (
 )
 from ui.formatters import integer, vnd
 from ui.nav import goto
-from ui.shell import render_shell
+from ui.shell import back_button, render_shell
 
 # Chữ viết tắt từ tên phòng ban thật trong TEAMS — không invent person name.
 TEAM_INITIALS = {
@@ -302,6 +302,7 @@ def _render_empty() -> None:
     with b2:
         show(prelaunch_checklist_card([]))
     st.caption("Quay lại Decide để chọn phương án khuyến mãi trước khi triển khai.")
+    back_button("decide", key="ex_back_empty")
 
 
 def _render_view(vm: ExecuteViewModel, rec) -> None:
@@ -476,6 +477,7 @@ def _render_actions(vm: ExecuteViewModel, rec) -> None:
                 disabled=disabled,
             ):
                 _persist_campaign(rec)
+    back_button("decide", key="ex_back")
 
 
 # —— State / mutations ——

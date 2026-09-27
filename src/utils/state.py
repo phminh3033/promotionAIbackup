@@ -76,7 +76,9 @@ def init_session_state() -> None:
 
         hydrate_session_state()
     except Exception:  # noqa: BLE001 — persistence lỗi không được chặn app
-        pass
+        import logging
+
+        logging.getLogger(__name__).exception("hydrate_session_state thất bại")
 
 
 def persist_session_inputs() -> None:
@@ -97,7 +99,9 @@ def persist_session_inputs() -> None:
         mark_session_dirty()
         persist_session_to_disk()
     except Exception:  # noqa: BLE001
-        pass
+        import logging
+
+        logging.getLogger(__name__).exception("persist_session_to_disk thất bại")
 
 
 def save_workspace_now() -> None:
@@ -108,7 +112,9 @@ def save_workspace_now() -> None:
         mark_session_dirty()
         persist_session_to_disk(force=True)
     except Exception:  # noqa: BLE001
-        pass
+        import logging
+
+        logging.getLogger(__name__).exception("save_workspace_now thất bại")
 
 
 def _persist_local_context() -> None:

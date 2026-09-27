@@ -134,43 +134,46 @@ def _wire_mobile_menu() -> None:
     """Nối nút hamburger (chỉ hiện trên mobile) với toggle sidebar gốc của Streamlit."""
     import streamlit.components.v1 as components
 
+    # Streamlit ≥1.38/1.64: nút mở sidebar là stExpandSidebarButton (không còn
+    # stSidebarCollapsedControl). Click nút đó khi đang collapsed; ngược lại click
+    # stSidebarCollapseButton để đóng.
     components.html(
         """
 <script>
 (function () {
-  var doc = window.parent.document;
-  if (doc.documentElement.dataset.ppMenuWired === "1") return;
-  doc.documentElement.dataset.ppMenuWired = "1";
+  var win, doc;
+  try { win = window.parent; doc = win.document; } catch (err) { return; }
+  function clickEl(el) {
+    if (!el) return false;
+    var btn = el.tagName === "BUTTON" ? el : (el.querySelector("button") || el);
+    try { btn.click(); return true; } catch (e) { return false; }
+  }
+  /* Gán lại mỗi lần rerun — luôn dùng selector Streamlit mới nhất. */
+  win.__ppToggleSidebar = function () {
+    var expand = doc.querySelector('[data-testid="stExpandSidebarButton"]')
+      || doc.querySelector('[data-testid="stSidebarCollapsedControl"]');
+    if (expand) { clickEl(expand); return; }
+    var collapse = doc.querySelector('[data-testid="stSidebarCollapseButton"]')
+      || doc.querySelector('section[data-testid="stSidebar"] button[kind="headerNoPadding"]')
+      || doc.querySelector('section[data-testid="stSidebar"] [data-testid="stBaseButton-headerNoPadding"]');
+    clickEl(collapse);
+  };
+  if (doc.documentElement.dataset.ppMenuWired === "v2") return;
+  doc.documentElement.dataset.ppMenuWired = "v2";
   doc.addEventListener("click", function (e) {
     var t = e.target;
     if (!t || !t.closest) return;
-    var btn = t.closest(".pp-menu-btn");
-    if (!btn) return;
+    if (!t.closest(".pp-menu-btn")) return;
     e.preventDefault();
     e.stopPropagation();
-    var sidebar = doc.querySelector('section[data-testid="stSidebar"]');
-    var collapse = doc.querySelector(
-      '[data-testid="stSidebarCollapseButton"] button, [data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"]'
-    );
-    var expand = doc.querySelector(
-      '[data-testid="stSidebarCollapsedControl"] button, [data-testid="stSidebarCollapsedControl"]'
-    );
-    var open = false;
-    if (sidebar) {
-      var aria = sidebar.getAttribute("aria-expanded");
-      var w = 0;
-      try { w = sidebar.getBoundingClientRect().width; } catch (err) {}
-      open = aria === "true" || w > 40;
-    }
-    if (open && collapse) { collapse.click(); return; }
-    if (expand) expand.click();
+    if (typeof win.__ppToggleSidebar === "function") win.__ppToggleSidebar();
   }, true);
   doc.addEventListener("keydown", function (e) {
     if (e.key !== "Enter" && e.key !== " ") return;
     var t = e.target;
     if (!t || !t.classList || !t.classList.contains("pp-menu-btn")) return;
     e.preventDefault();
-    t.click();
+    if (typeof win.__ppToggleSidebar === "function") win.__ppToggleSidebar();
   }, true);
 })();
 </script>
@@ -180,10 +183,25 @@ def _wire_mobile_menu() -> None:
     )
 
 
-def continue_button(label: str, target: str, key: str) -> None:
-    """Nút chuyển bước — full width, cùng độ dài giữa các trang."""
+def continue_button(
+    label: str,
+    target: str,
+    key: str,
+    *,
+    back_to: str | None = None,
+) -> None:
+    """Nút chuyển bước — full width; nút trở lại nhỏ hơn ngay bên dưới."""
     st.markdown('<div class="pp-continue-row" aria-hidden="true"></div>', unsafe_allow_html=True)
     if st.button(label, type="primary", key=key, width="stretch"):
+        goto(target)
+    if back_to:
+        back_button(back_to, key=f"{key}_back")
+
+
+def back_button(target: str, *, key: str, label: str = "← Trở lại bước trước đó") -> None:
+    """Nút trở lại — secondary, nhỏ hơn nút tiếp tục."""
+    st.markdown('<div class="pp-back-row" aria-hidden="true"></div>', unsafe_allow_html=True)
+    if st.button(label, type="secondary", key=key, width="stretch"):
         goto(target)
 
 
