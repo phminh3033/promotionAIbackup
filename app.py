@@ -22,12 +22,16 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 inject_css()
-# Hydrate browser storage TRƯỚC cổng demo — không đổi flow trang/logic tính toán.
+# Khôi phục phiên từ đĩa TRƯỚC cổng demo — giữ dữ liệu/kết quả/mã truy cập qua F5.
 from src.utils.state import init_session_state
 
-_hydrate_status = init_session_state()
-if _hydrate_status is None:
-    st.stop()
+init_session_state()
+try:
+    from src.utils.session_persistence import inject_workspace_cookie
+
+    inject_workspace_cookie()
+except Exception:  # noqa: BLE001
+    pass
 require_demo_access()
 
 pages = {

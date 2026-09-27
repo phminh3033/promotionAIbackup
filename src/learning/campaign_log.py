@@ -1,6 +1,7 @@
 """Campaign Learning Loop (mục XXXII spec PromotionPilot AI).
 
-Kho chiến dịch trong `st.session_state["campaign_records"]` — gắn phiên WebSocket hiện tại.
+Kho chiến dịch trong `st.session_state["campaign_records"]`, đồng bộ snapshot qua
+`save_workspace_now()` (cơ chế session_persistence).
 """
 from __future__ import annotations
 
@@ -57,7 +58,7 @@ def _as_record(value) -> CampaignRecord | None:
 
 
 def normalize_campaign_records_map(raw) -> dict[str, CampaignRecord]:
-    """Chuẩn hoá map id→CampaignRecord (dict thuần → dataclass)."""
+    """Chuẩn hoá map id→CampaignRecord sau hydrate/pickle (dict thuần → dataclass)."""
     if not isinstance(raw, dict):
         return {}
     out: dict[str, CampaignRecord] = {}
@@ -70,9 +71,15 @@ def normalize_campaign_records_map(raw) -> dict[str, CampaignRecord]:
 
 
 def save_campaign_record(record: CampaignRecord) -> str:
-    """Ghi/ghi đè record trong st.session_state."""
+    """Ghi/ghi đè record trong session + ép snapshot (giữ qua reload)."""
     store = _store()
     store[record.campaign_id] = record
+    try:
+        from src.utils.state import save_workspace_now
+
+        save_workspace_now()
+    except Exception:  # noqa: BLE001 — không chặn UI nếu persistence lỗi
+        pass
     return record.campaign_id
 
 

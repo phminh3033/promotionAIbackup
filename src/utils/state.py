@@ -34,12 +34,7 @@ SESSION_RESULT_KEYS = (
 )
 
 
-def init_session_state() -> bool | None:
-    """Khởi tạo defaults + hydrate từ browser storage (nếu có).
-
-    Trả về None khi đang chờ JS đọc localStorage/sessionStorage/cookie —
-    caller (app.py) nên st.stop() ngắn để đợi rerun. Không đổi logic nghiệp vụ.
-    """
+def init_session_state() -> None:
     defaults = {
         "raw_df": None,
         "raw_filename": None,
@@ -74,43 +69,47 @@ def init_session_state() -> bool | None:
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+    # Nạp snapshot đĩa SAU defaults — ghi đè bằng dữ liệu đã lưu qua lần reload trước.
     try:
-        from src.utils.browser_session import hydrate_session_state
+        from src.utils.session_persistence import hydrate_session_state
 
-        return hydrate_session_state()
-    except Exception:  # noqa: BLE001
+        hydrate_session_state()
+    except Exception:  # noqa: BLE001 — persistence lỗi không được chặn app
         import logging
 
         logging.getLogger(__name__).exception("hydrate_session_state thất bại")
-        st.session_state["_workspace_hydrated"] = True
-        return False
 
 
 def persist_session_inputs() -> None:
-    """Đồng bộ widget → session (left menu) + mirror sang browser storage của user."""
+    """Đồng bộ giá trị widget → đối tượng phiên trước/khi chuyển trang (left menu).
+
+    Giữ nguyên các kết quả mô hình đã có trong session (forecast, RFM, simulate...).
+    Chỉ ghi đè các field người dùng đang nhập qua widget keys.
+    Đồng thời đánh dấu dirty + ghi đĩa để sống sót qua F5/reload trình duyệt.
+    """
     init_session_state()
     _persist_local_context()
     _persist_business_profile()
     _persist_prepare_and_simulate()
     _persist_page_controls()
     try:
-        from src.utils.browser_session import mark_session_dirty, persist_session_to_browser
+        from src.utils.session_persistence import mark_session_dirty, persist_session_to_disk
 
         mark_session_dirty()
-        persist_session_to_browser()
+        persist_session_to_disk()
     except Exception:  # noqa: BLE001
         import logging
 
-        logging.getLogger(__name__).exception("persist_session_to_browser thất bại")
+        logging.getLogger(__name__).exception("persist_session_to_disk thất bại")
 
 
 def save_workspace_now() -> None:
-    """Ép ghi snapshot vào browser storage (localStorage + sessionStorage + cookie meta)."""
+    """Ép ghi snapshot ngay (sau tải dữ liệu / chạy mô hình)."""
     try:
-        from src.utils.browser_session import mark_session_dirty, persist_session_to_browser
+        from src.utils.session_persistence import mark_session_dirty, persist_session_to_disk
 
         mark_session_dirty()
-        persist_session_to_browser(force=True)
+        persist_session_to_disk(force=True)
     except Exception:  # noqa: BLE001
         import logging
 

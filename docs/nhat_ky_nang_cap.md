@@ -80,6 +80,18 @@ tách khỏi Simulate/Decide; bảng công việc quá cao vì click-to-edit Str
 
 ---
 
+## 2026-09-27 — Revert persistence về cơ chế 2 commit trước (f99d0a7)
+
+**Thực hiện bởi:** Yêu cầu user revert 2 lần sửa đổi persistence gần nhất.
+
+**Thay đổi:** Gỡ `browser_session` / localStorage-component (6383ad2, 74a574e). Khôi phục
+`session_persistence.py` kiểu `f99d0a7`: snapshot đĩa `config/session_workspace/` + cookie/`wid`
++ fallback `pp_default`.
+
+**Kết quả kiểm thử:** `pytest` 90/90 pass (~11.7s).
+
+---
+
 ## 2026-09-27 (chiều) — Browser-only persistence (localStorage/sessionStorage/cookie)
 
 **Thực hiện bởi:** Yêu cầu user — lưu phiên trên browser riêng, hạn chế DB Railway chung;

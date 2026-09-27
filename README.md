@@ -181,9 +181,9 @@ flowchart TB
 - **`services/scientific_model_engine.py`** bọc các hàm `src/` (forecast, RFM, inventory, simulate…).
 - **`services/recommendation_engine.py`** dựng thẻ đề xuất; `AgentEngine` (LLM) chỉ enhance nội dung
   khi được bật — **không** quyết định khuyến mãi.
-- **State dùng chung:** `src/utils/state.py` → `st.session_state` trong phiên WebSocket.
-  Qua F5/reload, snapshot mirror vào **localStorage + sessionStorage + cookie** của trình duyệt
-  từng user (`src/utils/browser_session.py`) — không ghi DB/đĩa chung trên Railway.
+- **State dùng chung:** `src/utils/state.py` → `st.session_state` (`clean_df`, forecast cache,
+  scenario, recommendation, execution plan…). Qua F5/reload, snapshot ghi/nạp bởi
+  `src/utils/session_persistence.py` (cookie + `?wid=` + file trong `config/session_workspace/`).
 - **Chưa nối nguồn thật:** `src/external_signals/`, `src/integrations/` (xem mục 9–10).
 
 ### Luồng nghiệp vụ (7 bước)
