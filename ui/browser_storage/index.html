@@ -9,7 +9,7 @@
   </head>
   <body>
     <script>
-      /* Minimal Streamlit component protocol (không phụ thuộc CDN). */
+      /* Minimal Streamlit component protocol — chỉ thao tác storage của trình duyệt hiện tại. */
       function sendMessageToStreamlitClient(type, data) {
         const outData = Object.assign({ isStreamlitMessage: true, type: type }, data);
         window.parent.postMessage(outData, "*");
@@ -37,49 +37,90 @@
         },
       };
 
-      function safeGet(key) {
+      function lsGet(key) {
         try { return window.localStorage.getItem(key); } catch (e) { return null; }
       }
-      function safeSet(key, value) {
+      function lsSet(key, value) {
         try {
-          if (value === null || value === undefined || value === "") {
-            window.localStorage.removeItem(key);
+          if (!value) { window.localStorage.removeItem(key); }
+          else { window.localStorage.setItem(key, value); }
+          return true;
+        } catch (e) { return false; }
+      }
+      function ssGet(key) {
+        try { return window.sessionStorage.getItem(key); } catch (e) { return null; }
+      }
+      function ssSet(key, value) {
+        try {
+          if (!value) { window.sessionStorage.removeItem(key); }
+          else { window.sessionStorage.setItem(key, value); }
+          return true;
+        } catch (e) { return false; }
+      }
+      function cookieGet(name) {
+        try {
+          var parts = ("; " + document.cookie).split("; " + name + "=");
+          if (parts.length === 2) return decodeURIComponent(parts.pop().split(";").shift() || "");
+          return null;
+        } catch (e) { return null; }
+      }
+      function cookieSet(name, value, maxAge) {
+        try {
+          if (!value) {
+            document.cookie = name + "=; path=/; max-age=0; SameSite=Lax";
           } else {
-            window.localStorage.setItem(key, value);
+            document.cookie =
+              name + "=" + encodeURIComponent(value) +
+              "; path=/; max-age=" + (maxAge || 31536000) + "; SameSite=Lax";
           }
           return true;
         } catch (e) { return false; }
       }
-      function safeClear(key) {
-        try { window.localStorage.removeItem(key); return true; } catch (e) { return false; }
-      }
 
       function onRender(event) {
-        const args = (event && event.detail && event.detail.args) || {};
-        const mode = args.mode || "get";
-        const key = args.storage_key || "pp_session_v1";
-        const nonce = args.nonce || 0;
+        var args = (event && event.detail && event.detail.args) || {};
+        var mode = args.mode || "get";
+        var key = args.storage_key || "pp_session_v1";
+        var cookieKey = args.cookie_key || "pp_meta";
+        var nonce = args.nonce || 0;
 
         if (mode === "get") {
+          // Ưu tiên localStorage → sessionStorage → cookie meta (cờ nhỏ).
+          var blob = lsGet(key) || ssGet(key) || null;
           Streamlit.setComponentValue({
             status: "ready",
             mode: "get",
             nonce: nonce,
-            value: safeGet(key),
+            value: blob,
+            cookie: cookieGet(cookieKey),
+            sources: {
+              localStorage: !!lsGet(key),
+              sessionStorage: !!ssGet(key),
+              cookie: !!cookieGet(cookieKey),
+            },
           });
         } else if (mode === "set") {
+          var okLs = lsSet(key, args.value || "");
+          var okSs = ssSet(key, args.value || "");
+          var okCk = true;
+          if (args.cookie_value !== undefined && args.cookie_value !== null) {
+            okCk = cookieSet(cookieKey, args.cookie_value, args.cookie_max_age || 31536000);
+          }
           Streamlit.setComponentValue({
             status: "ready",
             mode: "set",
             nonce: nonce,
-            ok: safeSet(key, args.value || ""),
+            ok: !!(okLs || okSs),
+            ok_localStorage: okLs,
+            ok_sessionStorage: okSs,
+            ok_cookie: okCk,
           });
         } else if (mode === "clear") {
           Streamlit.setComponentValue({
             status: "ready",
             mode: "clear",
             nonce: nonce,
-            ok: safeClear(key),
+            ok: lsSet(key, "") && ssSet(key, "") && cookieSet(cookieKey, ""),
           });
         }
         Streamlit.setFrameHeight(0);

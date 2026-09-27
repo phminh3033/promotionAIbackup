@@ -38,8 +38,7 @@ test + docs) trong 1 phiên, hơn là làm dở nhiều hạng mục.
 3. PDF export cho báo cáo tổng hợp (hiện chỉ có CSV/Excel, xem trang Export Report).
 4. Multi-tenant: chuyển Business Profile/Campaign Log từ JSON file sang SQLite, hỗ trợ nhiều doanh
    nghiệp dùng chung 1 instance (hiện mỗi máy cài riêng nên chưa cấp thiết, nhưng cần nếu SaaS hoá).
-   Phiên làm việc UI đã tách theo **localStorage từng trình duyệt** (không còn đĩa chung
-   `pp_default`) — multi-tenant hồ sơ DN vẫn là hạng mục riêng.
+   Phiên UI hiện chỉ dùng `st.session_state` (không persist cross-reload / không đĩa chung).
 5. Tích hợp LLM thật (có hook sẵn ở `src/recommendation/campaign.py::is_llm_enabled`, chưa kích
    hoạt) để sinh nội dung marketing sinh động hơn — CHỈ gửi dữ liệu tổng hợp, không gửi transaction chi tiết.
 6. Danh sách ngày lễ Việt Nam đầy đủ hơn (bao gồm Tết Âm lịch tính theo năm) trong

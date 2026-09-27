@@ -182,9 +182,8 @@ flowchart TB
 - **`services/recommendation_engine.py`** dựng thẻ đề xuất; `AgentEngine` (LLM) chỉ enhance nội dung
   khi được bật — **không** quyết định khuyến mãi.
 - **State dùng chung:** `src/utils/state.py` → `st.session_state` trong phiên WebSocket.
-  Qua F5/reload, snapshot được lưu/nạp bằng **localStorage trình duyệt**
-  (`src/utils/session_persistence.py` + `ui/browser_storage/`) — mỗi user chỉ thấy data của mình,
-  không ghi vào đĩa/DB chung trên Railway.
+  Qua F5/reload, snapshot mirror vào **localStorage + sessionStorage + cookie** của trình duyệt
+  từng user (`src/utils/browser_session.py`) — không ghi DB/đĩa chung trên Railway.
 - **Chưa nối nguồn thật:** `src/external_signals/`, `src/integrations/` (xem mục 9–10).
 
 ### Luồng nghiệp vụ (7 bước)

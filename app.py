@@ -22,12 +22,9 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 inject_css()
-# Khôi phục phiên từ localStorage TRÌNH DUYỆT (không dùng đĩa/server chung).
-# Frame đầu đợi JS đọc xong — tránh user mới thấy data người khác trên Railway.
-from src.utils.session_persistence import purge_legacy_shared_workspace
+# Hydrate browser storage TRƯỚC cổng demo — không đổi flow trang/logic tính toán.
 from src.utils.state import init_session_state
 
-purge_legacy_shared_workspace()
 _hydrate_status = init_session_state()
 if _hydrate_status is None:
     st.stop()

@@ -1,4 +1,4 @@
-"""Streamlit custom component: đọc/ghi localStorage của trình duyệt hiện tại."""
+"""Streamlit component: localStorage + sessionStorage + cookie của trình duyệt hiện tại."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,11 +13,17 @@ _browser_storage = components.declare_component(
 )
 
 
-def browser_storage_get(storage_key: str, *, nonce: int = 0, component_key: str = "pp_ls_get") -> Any:
-    """Đọc localStorage. Trả về dict {status, value} khi JS sẵn sàng; None ở frame đầu."""
+def browser_storage_get(
+    storage_key: str,
+    *,
+    cookie_key: str = "pp_meta",
+    nonce: int = 0,
+    component_key: str = "pp_bs_get",
+) -> Any:
     return _browser_storage(
         mode="get",
         storage_key=storage_key,
+        cookie_key=cookie_key,
         nonce=int(nonce),
         default=None,
         key=component_key,
@@ -28,24 +34,36 @@ def browser_storage_set(
     storage_key: str,
     value: str,
     *,
+    cookie_key: str = "pp_meta",
+    cookie_value: str | None = None,
+    cookie_max_age: int = 31536000,
     nonce: int = 0,
-    component_key: str = "pp_ls_set",
+    component_key: str = "pp_bs_set",
 ) -> Any:
-    """Ghi localStorage. value = chuỗi đã encode (base64)."""
     return _browser_storage(
         mode="set",
         storage_key=storage_key,
         value=value,
+        cookie_key=cookie_key,
+        cookie_value=cookie_value,
+        cookie_max_age=int(cookie_max_age),
         nonce=int(nonce),
         default=None,
         key=component_key,
     )
 
 
-def browser_storage_clear(storage_key: str, *, nonce: int = 0, component_key: str = "pp_ls_clear") -> Any:
+def browser_storage_clear(
+    storage_key: str,
+    *,
+    cookie_key: str = "pp_meta",
+    nonce: int = 0,
+    component_key: str = "pp_bs_clear",
+) -> Any:
     return _browser_storage(
         mode="clear",
         storage_key=storage_key,
+        cookie_key=cookie_key,
         nonce=int(nonce),
         default=None,
         key=component_key,

@@ -80,6 +80,34 @@ tách khỏi Simulate/Decide; bảng công việc quá cao vì click-to-edit Str
 
 ---
 
+## 2026-09-27 (chiều) — Browser-only persistence (localStorage/sessionStorage/cookie)
+
+**Thực hiện bởi:** Yêu cầu user — lưu phiên trên browser riêng, hạn chế DB Railway chung;
+không can thiệp logic/flow hệ thống.
+
+**Thay đổi (chỉ lớp persistence):**
+- `src/utils/browser_session.py` + `ui/browser_storage/`: snapshot → localStorage &
+  sessionStorage; cookie `pp_meta` chỉ giữ cờ nhỏ (vd demo access).
+- Gắn qua `init_session_state` / `persist_session_inputs` / `save_workspace_now` hiện có.
+- Không ghi `config/session_workspace`, không đổi formula/model/page flow.
+
+**Kết quả kiểm thử:** `pytest` 88/88 pass (~11.9s).
+
+---
+
+## 2026-09-27 (trưa) — Revert persistence về st.session_state thuần
+
+**Thực hiện bởi:** Yêu cầu user revert cơ chế lưu session ban đầu.
+
+**Thay đổi:** Gỡ toàn bộ lưu phiên ra đĩa Railway / localStorage (`session_persistence.py`,
+`ui/browser_storage/`). App chỉ giữ data trong `st.session_state` (phiên WebSocket).
+`persist_session_inputs()` vẫn đồng bộ widget khi chuyển trang menu. F5 = phiên mới trống.
+User mới không còn thấy data người khác.
+
+**Kết quả kiểm thử:** `pytest` 83/83 pass.
+
+---
+
 ## 2026-09-27 (buổi sáng) — Persistence chỉ trong trình duyệt (hết chia sẻ data Railway)
 
 **Thực hiện bởi:** Phiên trực tiếp (user báo user mới vào đã thấy sẵn data của người khác).
