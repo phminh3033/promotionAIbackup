@@ -380,6 +380,11 @@ section[data-testid="stSidebar"] a[aria-current="page"]:hover {
   /* Điện thoại: ẩn thanh 7 bước (chồng chữ), hiện nút mở left menu. */
   .pp-stagebar { display: none !important; }
   .pp-menu-btn { display: inline-flex; }
+  /* Header Streamlit trong suốt (~56px) nhưng vẫn nhận tap và che icon menu.
+     Toolbar đã ẩn; chỉ điện thoại cần bấm .pp-menu-btn xuyên qua header. */
+  [data-testid="stHeader"] {
+    pointer-events: none !important;
+  }
   [data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] {
     display: flex !important;
   }

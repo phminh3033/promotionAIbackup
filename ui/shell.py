@@ -65,6 +65,8 @@ def render_shell(title: str, subtitle: str, stage: int | None = None, eyebrow: s
     chips = _chips()
     stage_html = _stages(stage) if stage is not None else ""
     menu_icon = icon("menu", 20)
+    # Script chạy trong trang (không iframe): mỗi lần render gắn lại click,
+    # vì listener từ iframe bị huỷ khi Streamlit rerun.
     st.html(
         f"""
 <div class="pp-head">
@@ -79,9 +81,37 @@ def render_shell(title: str, subtitle: str, stage: int | None = None, eyebrow: s
   <p class="pp-sub">{escape(subtitle)}</p>
 </div>
 {stage_html}
-"""
+<script>
+(function () {{
+  var btn = document.querySelector(".pp-menu-btn");
+  if (!btn) return;
+  btn.onclick = function (e) {{
+    if (!window.matchMedia("(max-width: 720px)").matches) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setTimeout(function () {{
+      var expand = document.querySelector('[data-testid="stExpandSidebarButton"]')
+        || document.querySelector('[data-testid="stSidebarCollapsedControl"]');
+      var collapse = document.querySelector('[data-testid="stSidebarCollapseButton"] button')
+        || document.querySelector('[data-testid="stSidebarCollapseButton"]')
+        || document.querySelector('section[data-testid="stSidebar"] button[kind="headerNoPadding"]');
+      var el = expand || collapse;
+      if (!el) return;
+      var target = el.tagName === "BUTTON" ? el : (el.querySelector("button") || el);
+      target.click();
+    }}, 0);
+  }};
+  btn.onkeydown = function (e) {{
+    if (e.key !== "Enter" && e.key !== " ") return;
+    if (!window.matchMedia("(max-width: 720px)").matches) return;
+    e.preventDefault();
+    btn.click();
+  }};
+}})();
+</script>
+""",
+        unsafe_allow_javascript=True,
     )
-    _wire_mobile_menu()
 
 
 def _chips() -> str:
@@ -128,59 +158,6 @@ def _sidebar() -> None:
 </div>
 """
         )
-
-
-def _wire_mobile_menu() -> None:
-    """Nối nút hamburger (chỉ hiện trên mobile) với toggle sidebar gốc của Streamlit."""
-    import streamlit.components.v1 as components
-
-    # Streamlit ≥1.38/1.64: nút mở sidebar là stExpandSidebarButton (không còn
-    # stSidebarCollapsedControl). Click nút đó khi đang collapsed; ngược lại click
-    # stSidebarCollapseButton để đóng.
-    components.html(
-        """
-<script>
-(function () {
-  var win, doc;
-  try { win = window.parent; doc = win.document; } catch (err) { return; }
-  function clickEl(el) {
-    if (!el) return false;
-    var btn = el.tagName === "BUTTON" ? el : (el.querySelector("button") || el);
-    try { btn.click(); return true; } catch (e) { return false; }
-  }
-  /* Gán lại mỗi lần rerun — luôn dùng selector Streamlit mới nhất. */
-  win.__ppToggleSidebar = function () {
-    var expand = doc.querySelector('[data-testid="stExpandSidebarButton"]')
-      || doc.querySelector('[data-testid="stSidebarCollapsedControl"]');
-    if (expand) { clickEl(expand); return; }
-    var collapse = doc.querySelector('[data-testid="stSidebarCollapseButton"]')
-      || doc.querySelector('section[data-testid="stSidebar"] button[kind="headerNoPadding"]')
-      || doc.querySelector('section[data-testid="stSidebar"] [data-testid="stBaseButton-headerNoPadding"]');
-    clickEl(collapse);
-  };
-  if (doc.documentElement.dataset.ppMenuWired === "v2") return;
-  doc.documentElement.dataset.ppMenuWired = "v2";
-  doc.addEventListener("click", function (e) {
-    var t = e.target;
-    if (!t || !t.closest) return;
-    if (!t.closest(".pp-menu-btn")) return;
-    e.preventDefault();
-    e.stopPropagation();
-    if (typeof win.__ppToggleSidebar === "function") win.__ppToggleSidebar();
-  }, true);
-  doc.addEventListener("keydown", function (e) {
-    if (e.key !== "Enter" && e.key !== " ") return;
-    var t = e.target;
-    if (!t || !t.classList || !t.classList.contains("pp-menu-btn")) return;
-    e.preventDefault();
-    if (typeof win.__ppToggleSidebar === "function") win.__ppToggleSidebar();
-  }, true);
-})();
-</script>
-""",
-        height=0,
-        width=0,
-    )
 
 
 def continue_button(
