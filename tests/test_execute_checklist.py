@@ -1,4 +1,4 @@
-"""Checklist readiness trên Execute — điều kiện launch."""
+"""Checklist readiness trên Execute — chỉ theo dõi tiến độ, không chặn launch."""
 from __future__ import annotations
 
 from ui.pages.execute import checklist_progress
@@ -12,7 +12,7 @@ def test_checklist_progress_partial():
     assert pct == 67
 
 
-def test_checklist_progress_all_checked_enables_launch_math():
+def test_checklist_progress_all_checked():
     ids = [f"t{i}" for i in range(12)]
     checks = {tid: True for tid in ids}
     done, total, pct = checklist_progress(checks, ids)

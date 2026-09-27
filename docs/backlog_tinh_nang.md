@@ -38,8 +38,8 @@ test + docs) trong 1 phiên, hơn là làm dở nhiều hạng mục.
 3. PDF export cho báo cáo tổng hợp (hiện chỉ có CSV/Excel, xem trang Export Report).
 4. Multi-tenant: chuyển Business Profile/Campaign Log từ JSON file sang SQLite, hỗ trợ nhiều doanh
    nghiệp dùng chung 1 instance (hiện mỗi máy cài riêng nên chưa cấp thiết, nhưng cần nếu SaaS hoá).
-   Workspace session hiện dùng cookie/`wid` + file pickle — đủ cho demo 1 người; multi-tenant thật
-   cần DB + auth.
+   Phiên làm việc UI đã tách theo **localStorage từng trình duyệt** (không còn đĩa chung
+   `pp_default`) — multi-tenant hồ sơ DN vẫn là hạng mục riêng.
 5. Tích hợp LLM thật (có hook sẵn ở `src/recommendation/campaign.py::is_llm_enabled`, chưa kích
    hoạt) để sinh nội dung marketing sinh động hơn — CHỈ gửi dữ liệu tổng hợp, không gửi transaction chi tiết.
 6. Danh sách ngày lễ Việt Nam đầy đủ hơn (bao gồm Tết Âm lịch tính theo năm) trong
@@ -62,9 +62,13 @@ test + docs) trong 1 phiên, hơn là làm dở nhiều hạng mục.
 
 - **2026-09-26 (đêm)**: Snapshot «Thiết lập mô phỏng» khi Chạy mô phỏng → tự điền Execute;
   Execute read-only + card đồng bộ hệ thống. Chi tiết: `docs/nhat_ky_nang_cap.md` đợt #4 / #4b.
+- **2026-09-27**: Persistence phiên chuyển sang **localStorage trình duyệt** (không còn đĩa/
+  `pp_default` chung trên Railway). User mới không thấy data người khác. Chi tiết:
+  `docs/nhat_ky_nang_cap.md`.
 - **2026-09-26**: Giữ nguyên dữ liệu đã nạp, input form, kết quả dự báo/mô phỏng qua F5/reload
   trình duyệt — `src/utils/session_persistence.py` (cookie + query `wid` + pickle workspace).
   Chi tiết: `docs/nhat_ky_nang_cap.md` đợt #3.
+  **Đã thay thế 2026-09-27** bằng localStorage (cơ chế đĩa chung gây leak đa user).
 - **2026-09-21 (buổi tối)**: Mở rộng toàn diện thành PromotionPilot AI — Local Context, Execution
   Plan, Campaign Monitor, Alert Engine + AI Action, Campaign Learning Loop, External
   Signals/Integrations (stub kiến trúc), mục tiêu BRANDING, dataset Pharmacity demo, đa sheet Excel,

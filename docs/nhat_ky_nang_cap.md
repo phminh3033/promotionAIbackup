@@ -71,13 +71,29 @@ tách khỏi Simulate/Decide; bảng công việc quá cao vì click-to-edit Str
 
 **Thực hiện bởi:** Phiên làm việc trực tiếp với người dùng.
 
-**Mục tiêu:** Bỏ nút «Xem tất cả» ngoài card; tick checklist cập nhật mức sẵn sàng; phải chọn hết
-mới bật «Bắt đầu chiến dịch».
+**Mục tiêu:** Bỏ nút «Xem tất cả» ngoài card; tick checklist cập nhật mức sẵn sàng.
 
-**Thay đổi:** Checklist dùng `st.checkbox`; «Xem tất cả/Thu gọn» trong header card; readiness =
-số ô đã tick; blocker khi chưa đủ; persist `execute_checklist`.
+**Thay đổi:** Checklist dùng `st.checkbox`; readiness = số ô đã tick; persist `execute_checklist`.
+(Rule «phải tick hết mới launch» đã gỡ — checklist chỉ theo dõi, không chặn khởi chạy.)
 
 **Kết quả kiểm thử:** `pytest` 75/75 pass (~11.1s).
+
+---
+
+## 2026-09-27 (buổi sáng) — Persistence chỉ trong trình duyệt (hết chia sẻ data Railway)
+
+**Thực hiện bởi:** Phiên trực tiếp (user báo user mới vào đã thấy sẵn data của người khác).
+
+**Nguyên nhân:** Fallback/mirror `pp_default.pkl` trên đĩa container Railway là **kho chung** —
+mọi trình duyệt hydrate cùng một file.
+
+**Sửa triệt để:**
+- Bỏ hoàn toàn đọc/ghi `config/session_workspace/*.pkl` cho phiên user.
+- Lưu snapshot vào **localStorage** của từng trình duyệt (`ui/browser_storage` + encode zlib/base64).
+- `purge_legacy_shared_workspace()` xoá file `.pkl` đĩa cũ còn sót khi app khởi động.
+- User mới = localStorage trống = phiên trống; F5 cùng trình duyệt vẫn khôi phục được.
+
+**Kết quả kiểm thử:** `pytest` 88/88 pass (~10.5s).
 
 ---
 

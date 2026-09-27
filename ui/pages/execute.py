@@ -162,12 +162,7 @@ def build_execute_view_model(rec) -> ExecuteViewModel:
         except (TypeError, ValueError):
             blockers.append("Ngân sách không hợp lệ.")
 
-    # [BUSINESS RULE]: phải tick hết checklist trước khi «Bắt đầu chiến dịch».
-    if total > 0 and completed < total:
-        blockers.append(
-            f"Cần hoàn tất checklist trước khi khởi chạy ({completed}/{total} đã chọn)."
-        )
-
+    # Checklist chỉ theo dõi tiến độ — không chặn «Bắt đầu chiến dịch».
     ready = len(blockers) == 0
 
     return ExecuteViewModel(
@@ -408,7 +403,7 @@ def _render_checklist(vm: ExecuteViewModel) -> None:
         show(
             exec_panel_header(
                 "Checklist trước khi khởi động",
-                "Các hạng mục bắt buộc cần hoàn tất",
+                "Theo dõi hạng mục chuẩn bị trước khi khởi chạy",
                 "clipboard-check",
                 "is-blue",
             )
@@ -420,7 +415,7 @@ def _render_checklist(vm: ExecuteViewModel) -> None:
                 for task in vm.tasks:
                     _checklist_checkbox(task)
 
-    st.caption("Đánh dấu từng hạng mục khi hoàn tất. Phải chọn hết checklist mới bắt đầu chiến dịch.")
+    st.caption("Đánh dấu từng hạng mục khi hoàn tất (tuỳ chọn — không bắt buộc để khởi chạy).")
 
 
 def _checklist_checkbox(task: TaskVM) -> None:
@@ -441,7 +436,7 @@ def _render_actions(vm: ExecuteViewModel, rec) -> None:
             for b in vm.launch_blockers:
                 st.caption(f"• {b}")
         elif vm.ready_to_launch:
-            st.caption("Đã hoàn tất checklist — có thể bắt đầu chiến dịch.")
+            st.caption("Đủ điều kiện để bắt đầu chiến dịch.")
     with right:
         c1, c2 = st.columns(2)
         with c1:

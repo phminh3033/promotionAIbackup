@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>pp-browser-storage</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 0; overflow: hidden; }
+    </style>
+  </head>
+  <body>
+    <script>
+      /* Minimal Streamlit component protocol (không phụ thuộc CDN). */
+      function sendMessageToStreamlitClient(type, data) {
+        const outData = Object.assign({ isStreamlitMessage: true, type: type }, data);
+        window.parent.postMessage(outData, "*");
+      }
+      const Streamlit = {
+        setComponentReady: function () {
+          sendMessageToStreamlitClient("streamlit:componentReady", { apiVersion: 1 });
+        },
+        setFrameHeight: function (height) {
+          sendMessageToStreamlitClient("streamlit:setFrameHeight", { height: height });
+        },
+        setComponentValue: function (value) {
+          sendMessageToStreamlitClient("streamlit:setComponentValue", { value: value });
+        },
+        RENDER_EVENT: "streamlit:render",
+        events: {
+          addEventListener: function (type, callback) {
+            window.addEventListener("message", function (event) {
+              if (event.data && event.data.type === type) {
+                event.detail = event.data;
+                callback(event);
+              }
+            });
+          },
+        },
+      };
+
+      function safeGet(key) {
+        try { return window.localStorage.getItem(key); } catch (e) { return null; }
+      }
+      function safeSet(key, value) {
+        try {
+          if (value === null || value === undefined || value === "") {
+            window.localStorage.removeItem(key);
+          } else {
+            window.localStorage.setItem(key, value);
+          }
+          return true;
+        } catch (e) { return false; }
+      }
+      function safeClear(key) {
+        try { window.localStorage.removeItem(key); return true; } catch (e) { return false; }
+      }
+
+      function onRender(event) {
+        const args = (event && event.detail && event.detail.args) || {};
+        const mode = args.mode || "get";
+        const key = args.storage_key || "pp_session_v1";
+        const nonce = args.nonce || 0;
+
+        if (mode === "get") {
+          Streamlit.setComponentValue({
+            status: "ready",
+            mode: "get",
+            nonce: nonce,
+            value: safeGet(key),
+          });
+        } else if (mode === "set") {
+          Streamlit.setComponentValue({
+            status: "ready",
+            mode: "set",
+            nonce: nonce,
+            ok: safeSet(key, args.value || ""),
+          });
+        } else if (mode === "clear") {
+          Streamlit.setComponentValue({
+            status: "ready",
+            mode: "clear",
+            nonce: nonce,
+            ok: safeClear(key),
+          });
+        }
+        Streamlit.setFrameHeight(0);
+      }
+
+      Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, onRender);
+      Streamlit.setComponentReady();
+      Streamlit.setFrameHeight(0);
+    </script>
+  </body>
+</html>

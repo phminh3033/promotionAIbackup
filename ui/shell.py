@@ -54,12 +54,6 @@ def render_shell(title: str, subtitle: str, stage: int | None = None, eyebrow: s
     persist_session_inputs()
     if stage in _STAGE_PAGE_KEY:
         st.session_state["_pp_active_page"] = _STAGE_PAGE_KEY[stage]
-    try:
-        from src.utils.session_persistence import inject_workspace_cookie
-
-        inject_workspace_cookie()
-    except Exception:  # noqa: BLE001
-        pass
     inject_css()
     _sidebar()
     chips = _chips()
