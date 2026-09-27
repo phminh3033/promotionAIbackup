@@ -327,6 +327,28 @@ section[data-testid="stSidebar"] a[aria-current="page"]:hover {
 .pp-selected { border: 1.5px solid #7C3AED; box-shadow: 0 0 0 3px rgba(124,58,237,0.12); }
 .pp-foot { color: #94A3B8; font-size: 12px; margin-top: 18px; }
 .pp-meta { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pp-team-card { margin-top: 14px; }
+.pp-team-school {
+  margin: 8px 0 4px 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #0F172A;
+  letter-spacing: 0.01em;
+  line-height: 1.35;
+}
+.pp-team-course { margin: 0 0 12px 0; }
+.pp-team-block { margin: 0 0 10px 0; }
+.pp-team-block .pp-muted { margin: 0 0 4px 0; }
+.pp-team-list {
+  margin: 6px 0 4px 0;
+  padding-left: 1.25rem;
+  color: #0F172A;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.7;
+}
+.pp-team-list li { margin: 0; }
+.pp-team-copy { color: #64748B; font-size: 13px; font-weight: 650; }
 .pp-stack > .pp-metric-mini + .pp-metric-mini { margin-top: 8px; }
 .pp-def { margin: 0 0 10px 0; }
 .pp-def b { display: block; font-size: 12px; font-weight: 650; color: #64748B; margin-bottom: 2px; }

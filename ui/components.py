@@ -596,6 +596,34 @@ def model_card(title: str, subtitle: str, rows: list[tuple[str, str]], badge_htm
     return card(kicker(title) + f'<div class="pp-opp-title">{esc(subtitle)}</div>{facts}<div class="pp-meta">{badge_html}</div>')
 
 
+def team_members_card(
+    title: str,
+    *,
+    school: str,
+    course: str,
+    lecturer: str,
+    lecturer_email: str,
+    members_heading: str,
+    members: list[str],
+    copyright_note: str,
+) -> str:
+    """Card thông tin nhóm / bài thu hoạch — hiển thị dưới lưới model info."""
+    member_items = "".join(f"<li>{esc(name)}</li>" for name in members if str(name).strip())
+    return card(
+        kicker(title)
+        + f'<div class="pp-team-school">{esc(school)}</div>'
+        + f'<p class="pp-muted pp-team-course">{esc(course)}</p>'
+        + '<div class="pp-team-block">'
+        + f'<p class="pp-muted"><b>Giảng viên.</b> {esc(lecturer)}</p>'
+        + f'<p class="pp-muted"><b>Email.</b> {esc(lecturer_email)}</p>'
+        + "</div>"
+        + f'<div class="pp-opp-title">{esc(members_heading)}</div>'
+        + f'<ol class="pp-team-list">{member_items}</ol>'
+        + f'<div class="pp-meta"><span class="pp-team-copy">{esc(copyright_note)}</span></div>',
+        extra_class="pp-team-card",
+    )
+
+
 def footnote(text: str) -> str:
     return f'<p class="pp-foot">{esc(text)}</p>'
 

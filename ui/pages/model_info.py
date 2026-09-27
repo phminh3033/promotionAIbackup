@@ -1,17 +1,30 @@
 """Model Info: mô tả đúng phương pháp đang có trong source, không điền thông số giả."""
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import streamlit as st
 
 from src.forecasting.models import get_candidate_models
 from src.promotion.mechanics import MECHANIC_LABELS_VI
-from ui.components import badge, footnote, grid, model_card, show
+from ui.components import badge, footnote, grid, model_card, show, team_members_card
 from ui.shell import render_shell
+
+_TEAM_MEMBERS_PATH = Path(__file__).resolve().parents[2] / "config" / "team_members.json"
+
+_FALLBACK_MEMBERS = [
+    "Nguyễn Vũ Đăng Khoa",
+    "Trần Thị Hương Duy",
+    "Trương Như Thảo",
+    "Đặng Viết Cường",
+    "Phạm Hoàng Minh",
+]
 
 
 def render() -> None:
     render_shell(
-        "Model Information",
+        "More Information",
         "Phương pháp, dữ liệu đầu vào và độ tin cậy của các mô hình đang chạy trong PromotionPilot AI.",
     )
     names = [model.name for model in get_candidate_models(120)]
@@ -68,19 +81,53 @@ def render() -> None:
             "Không có trợ lý hội thoại. Đề xuất chỉ tổng hợp từ mô hình đã triển khai.",
         ),
     ]
-    show(grid([
-        model_card(
-            title,
-            subtitle,
+    show(
+        grid(
             [
-                ("Phương pháp", method),
-                ("Thành phần", catalog),
-                ("Đầu vào", inputs),
-                ("Trạng thái phiên", status),
-                ("Diễn giải", explain),
+                model_card(
+                    title,
+                    subtitle,
+                    [
+                        ("Phương pháp", method),
+                        ("Thành phần", catalog),
+                        ("Đầu vào", inputs),
+                        ("Trạng thái phiên", status),
+                        ("Diễn giải", explain),
+                    ],
+                    badge("Đang dùng trong source", "info"),
+                )
+                for title, subtitle, method, catalog, inputs, status, explain in cards
             ],
-            badge("Đang dùng trong source", "info"),
+            columns=2,
         )
-        for title, subtitle, method, catalog, inputs, status, explain in cards
-    ], columns=2))
-    show(footnote("Prophet, SHAP và Monte Carlo không nằm trong mã nguồn hiện tại nên không được ghi trên trang này."))
+    )
+    show(
+        team_members_card(
+            "Thông tin thành viên đại diện",
+            school="ĐẠI HỌC KINH TẾ TP. HỒ CHÍ MINH",
+            course=(
+                "Bài thu hoạch môn Ứng dụng trí tuệ nhân tạo và dữ liệu lớn trong kinh doanh "
+                "(LHP: 26D1BUS60304406)"
+            ),
+            lecturer="PGS.TS. Đinh Tiên Minh",
+            lecturer_email="dinhtienminh@ueh.edu.vn",
+            members_heading="Các thành viên của sản phẩm PromotionPilot AI",
+            members=_load_team_members(),
+            copyright_note="Bản quyền thuộc về Nhóm 8",
+        )
+    )
+    show(
+        footnote(
+            "Prophet, SHAP và Monte Carlo không nằm trong mã nguồn hiện tại nên không được ghi trên trang này."
+        )
+    )
+
+
+def _load_team_members() -> list[str]:
+    try:
+        raw = json.loads(_TEAM_MEMBERS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return list(_FALLBACK_MEMBERS)
+    if isinstance(raw, list) and raw and all(isinstance(item, str) for item in raw):
+        return [name.strip() for name in raw if str(name).strip()]
+    return list(_FALLBACK_MEMBERS)

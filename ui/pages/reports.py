@@ -6,9 +6,8 @@ import io
 import pandas as pd
 import streamlit as st
 
-from services.workflow import kpi_snapshot, period_chip
-from ui.components import DASH, EMPTY, card, grid, kicker, metric_mini, muted, show
-from ui.formatters import compact_vnd, integer, pct, roi_label
+from services.workflow import period_chip
+from ui.components import EMPTY
 from ui.shell import render_shell
 
 
@@ -17,73 +16,32 @@ def render() -> None:
     from src.utils.state import has_data
 
     loaded = has_data()
-    left, right = st.columns([1, 1], gap="large")
-    with left:
-        report_type = st.selectbox(
-            "Loại báo cáo",
-            ["Tổng hợp", "Hiệu quả chiến dịch", "Dự báo", "Mô phỏng khuyến mãi", "Khách hàng", "Tồn kho"],
-            key="rep_type",
-        )
-        st.text_input("Kỳ dữ liệu", value=period_chip() if loaded else "---", disabled=True, key="rep_period")
-        stores = ["Tất cả cửa hàng"]
-        caps = st.session_state.get("capabilities")
-        if loaded and caps is not None and caps.has_store:
-            stores += sorted(st.session_state["clean_df"]["store_id"].dropna().astype(str).unique().tolist())
-        store = st.selectbox("Cửa hàng / khu vực", stores, key="rep_store")
-        fmt = st.radio("Định dạng", ["Excel", "PDF"], horizontal=True, key="rep_fmt")
-        if fmt == "PDF":
-            st.info("Bản này xuất Excel. PDF chưa có bộ kết xuất riêng nên không tạo file PDF giả.")
-        if not loaded:
-            st.button("Xuất báo cáo", type="primary", disabled=True, width="stretch")
-            st.caption(EMPTY)
-        else:
-            buffer = _workbook(report_type, store)
-            st.download_button(
-                "Tải file Excel",
-                data=buffer.getvalue(),
-                file_name="promotionpilot_bao_cao.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                width="stretch",
-            )
-    with right:
-        if loaded:
-            _preview(store)
-        else:
-            show(_preview_card(EMPTY, DASH, DASH, DASH, DASH, ""))
-
-
-def _preview(store: str) -> None:
-    df = _filtered(store)
-    revenue = float(df["revenue"].sum()) if not df.empty else 0
-    orders = int(df["transaction_id"].nunique()) if "transaction_id" in df.columns else len(df)
-    margin = None
-    if "gross_profit" in df.columns and revenue:
-        margin = float(df["gross_profit"].sum()) / revenue
-    snap = kpi_snapshot()
-    show(_preview_card(
-        f"{period_chip()} · {store}",
-        compact_vnd(revenue),
-        integer(orders),
-        pct(margin, 1) if margin is not None else "—",
-        roi_label(snap["roi"]) if snap else "—",
-        "Phần dự báo, mô phỏng và đề xuất trong file là kết quả phiên làm việc, không tự chạy lại khi lọc cửa hàng.",
-    ))
-
-
-def _preview_card(subtitle: str, revenue: str, orders: str, margin: str, roi: str, note: str) -> str:
-    note_html = muted(note) if note else ""
-    return card(
-        kicker("Xem trước báo cáo")
-        + '<h2 style="margin:6px 0">PromotionPilot AI</h2>'
-        + muted(subtitle)
-        + grid([
-            metric_mini("Doanh thu", revenue),
-            metric_mini("Đơn / dòng", orders),
-            metric_mini("Margin", margin),
-            metric_mini("ROI mô phỏng", roi),
-        ], columns=2)
-        + note_html
+    report_type = st.selectbox(
+        "Loại báo cáo",
+        ["Tổng hợp", "Hiệu quả chiến dịch", "Dự báo", "Mô phỏng khuyến mãi", "Khách hàng", "Tồn kho"],
+        key="rep_type",
     )
+    st.text_input("Kỳ dữ liệu", value=period_chip() if loaded else "---", disabled=True, key="rep_period")
+    stores = ["Tất cả cửa hàng"]
+    caps = st.session_state.get("capabilities")
+    if loaded and caps is not None and caps.has_store:
+        stores += sorted(st.session_state["clean_df"]["store_id"].dropna().astype(str).unique().tolist())
+    store = st.selectbox("Cửa hàng / khu vực", stores, key="rep_store")
+    fmt = st.radio("Định dạng", ["Excel", "PDF"], horizontal=True, key="rep_fmt")
+    if fmt == "PDF":
+        st.info("Bản này xuất Excel. PDF chưa có bộ kết xuất riêng nên không tạo file PDF giả.")
+    if not loaded:
+        st.button("Xuất báo cáo", type="primary", disabled=True, width="stretch")
+        st.caption(EMPTY)
+    else:
+        buffer = _workbook(report_type, store)
+        st.download_button(
+            "Tải file Excel",
+            data=buffer.getvalue(),
+            file_name="promotionpilot_bao_cao.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width="stretch",
+        )
 
 
 def _filtered(store: str) -> pd.DataFrame:
